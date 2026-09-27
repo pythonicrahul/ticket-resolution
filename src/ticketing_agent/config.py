@@ -73,6 +73,18 @@ class Settings:
             raise ConfigError("LLM_MAX_RETRIES cannot be negative")
         if self.llm_timeout_seconds <= 0:
             raise ConfigError("LLM_TIMEOUT_SECONDS must be positive")
+        if not 0.0 <= self.relevance_threshold <= 1.0:
+            raise ConfigError(
+                f"RELEVANCE_THRESHOLD={self.relevance_threshold} is outside [0, 1]. Scores are "
+                "cosine similarities; a value above 1 makes every ticket escalate and a negative "
+                "one switches FR-10's threshold off entirely.")
+        if self.retrieval_top_k < 1:
+            raise ConfigError(
+                f"RETRIEVAL_TOP_K={self.retrieval_top_k} must be at least 1: zero would make "
+                "retrieval return nothing for every ticket.")
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ConfigError(
+                f"CONFIDENCE_THRESHOLD={self.confidence_threshold} is outside [0, 1].")
 
     def require_path(self, name: str) -> Path:
         """The path a component needs, or a message naming the setting that is missing."""

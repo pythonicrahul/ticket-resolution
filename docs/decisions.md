@@ -177,6 +177,23 @@ Provisional for a specific reason: the measurement used **whole articles**, whil
 narrower chunks, which will push overlap down. Row 5 must measure again on real chunks, and the author
 confirms or changes the number then.
 
+**Re-measured at row 5, on the real chunks** (90 chunks from the 29 articles, 646 claim-bearing expert
+sentences). The answer depends on what a sentence is checked against:
+
+| support the sentence is checked against | 0.2 rejects | 0.3 rejects | 0.4 rejects | 0.5 rejects |
+|---|---|---|---|---|
+| the whole article (the original measurement) | 0.0% | 3.6% | 6.7% | 19.3% |
+| every chunk of the expected article | 0.0% | 3.6% | 9.8% | 20.7% |
+| a single chunk (the worst case) | 3.9% | **9.1%** | 17.2% | 29.1% |
+
+So **0.3 stands**, with one design consequence for row 12 that the measurement made obvious: the overlap
+floor must be computed against the **union of the retrieved passages**, not only against the one chunk a
+sentence happens to cite. Checked against a single chunk, 0.3 would reject 9% of what CloudServe's own
+senior agents wrote. The two questions are different and both are needed: *does the citation resolve to a
+retrieved chunk* (exact, strict, FR-11) and *is the claim supported by the material we retrieved* (the
+overlap floor plus PR-03). Conflating them would make a correct answer fail because it cited one section
+while drawing on two.
+
 ## D-23 · A customer's own email address in a reply is still a leak (FR-12, NFR-04)
 Decided by the author, 2026-09-27. NFR-04's "zero private data in outbound replies" is read strictly: the
 draft is blocked even when the customer supplied the address themselves, because a reply may be read by others
@@ -300,3 +317,45 @@ The breaker was also a counter pretending to be a state: half-open primed `conse
 the breaker on a single later timeout. It is now an explicit `closed / open / half_open` state with the
 counter as evidence rather than a lever, a half-open trial gets exactly one attempt, and any failure
 re-opens it whatever its type.
+
+## D-33 · The retrieval index fingerprints the embedder by its output, not by its name (FR-10)
+Row 5's review found that `DefaultEmbeddingFunction.name()` returns the string `"default"` and
+`get_config()` returns `{}` on chromadb 1.5.9, so the first version of the index fingerprint could not tell
+all-MiniLM-L6-v2 from whatever a future chromadb ships. A version bump would have served a persisted index
+built with a different model: cosine scores that mean nothing, a threshold chosen at row 7 that no longer
+applies, and no signal anywhere. The fingerprint now embeds one fixed probe string and hashes the resulting
+vector, so a different model always produces a different fingerprint and the index is rebuilt. The
+configured `EMBEDDING_MODEL` is in the signature too, which also stops that setting being dead code.
+T-FR10-21 is the test: two embedders with the same name and config but different vectors must not share an
+index.
+
+## D-34 · Chunking is markdown sections, and nothing is dropped in silence (FR-10)
+Measured before deciding: the 29 articles split on `##` headings give 145 sections, median 157 characters,
+longest 658, none above 800. So a chunk is a section — a coherent answer unit, which the Build Specification
+asks us to be able to justify — with the article title prepended as context, sections under 120 characters
+merged (the heading of the **larger** part surviving, because the heading is embedded with the text), and
+anything over 800 characters split with the pack's own 800/120 numbers. `chunk_id` is `DOC-BILL-001#1`,
+which settles the format row 2's draft fixtures had assumed.
+
+The review also found two silent-loss paths, both now closed: a document with no id or no content was
+skipped without a word, and two documents sharing a `doc_id` aborted the whole build over colliding chunk
+ids — losing all 29 articles instead of one. `IndexStats.skipped` now reports every skip with its reason,
+`indexed_documents` says how many made it, and a duplicate keeps the first occurrence. The corpus is the
+only source of answers, so a partial index has to be visible rather than implied by a smaller chunk count.
+
+## D-35 · The sweep reports top-1 accuracy, precision against its own ceiling, and segment sizes (FR-10, NFR-06)
+The first sweep report had three ways to mislead the person choosing the threshold, all found in review.
+Precision at k counted correct passages over answerable tickets but divided by passages returned for *all*
+tickets, so the column moved with the denominator; it has no attainable maximum near 100% (70.5% at
+top_k=5 on this corpus, because an expected article has only so many chunks); and it rises as a higher
+threshold returns fewer passages, which is not better ranking. The report now computes precision over one
+population, states the ceiling, and adds **top-1 correct** — the column that answers the question the
+threshold actually turns on, whether the drafter would see the right passage first. It is 89.9% at
+threshold 0.
+
+The fairness table now carries sample sizes and a noise caveat, and reports tier as well as fluency, because
+the Governance Framework's fairness audit names both. The finding that matters: the fluent/non-fluent gap is
+4.3 points at threshold 0 and **widens as the threshold rises** — 7.8 at 0.30, 12.3 at 0.60 — so the
+threshold is a fairness decision as well as a quality one, and NFR-06's 5-point limit is breached by
+retrieval alone at 0.30 and above. With the smallest bucket at n=87, a few points is inside sampling noise;
+the report says so rather than quoting decimals as though they were precise.

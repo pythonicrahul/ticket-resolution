@@ -383,3 +383,74 @@ All three severes were the same shape: an untyped exception escaping `complete()
 2. No cache expiry: confirm reproducibility over freshness.
 3. Per-model breakers, if the judge model lands before row 17.
 4. Nothing tracks the remaining free-tier allowance; a token counter belongs with the metrics report (row 6).
+
+## 2026-09-28 · Row 5 · B-03/B-04 Chunking, index, retrieval · FR-10 (serves FR-04)
+
+**Files changed**
+- `docs/specs/FR-10.md` (new): the chunking strategy with the measurement behind it, indexing and the
+  fingerprint, the search rules, failure behaviour, 25 acceptance tests, 6 open questions.
+- `src/ticketing_agent/retrieve.py`: `chunk_documents` (pure), `Retriever` (build/search/resolve),
+  `Chunk`/`Passage`/`IndexStats`, `HashingEmbedder` and `RecordedEmbedder` for offline tests,
+  `RetrievalError`.
+- `src/ticketing_agent/config.py`: range checks for `RELEVANCE_THRESHOLD`, `RETRIEVAL_TOP_K` and
+  `CONFIDENCE_THRESHOLD`.
+- `scripts/record_embeddings.py`, `scripts/retrieval_sweep.py` (new);
+  `evaluation/reports/retrieval_sweep.md` and `tests/fixtures/recorded_embeddings.json` (0.5 MB) generated.
+- `tests/test_fr10_retrieval.py` (new): T-FR10-1 … T-FR10-25.
+- `docs/decisions.md` D-33 … D-35; `docs/BACKLOG.md` rows 5 (DONE), 6 and 7.
+- `pyproject.toml`: `langchain-text-splitters~=1.1.2`.
+
+**Result**: `uv run pytest -q` → 185 passed (180 at first green, 157 before this row).
+`uv run ruff check .` → clean. No test needs the network or the 80 MB model.
+
+**What the sweep found** (`evaluation/reports/retrieval_sweep.md`, real embeddings, 500 dev tickets)
+- Hit rate on answerable tickets **95.2%** at threshold 0, top-1 correct **89.9%**. Retrieval is not the
+  bottleneck in this system.
+- The threshold trade-off is visible: at 0.45, 91.9% hit rate but 16.1% of unanswerable tickets correctly
+  return nothing; at 0.60 it collapses to 63%.
+- **The fluent/non-fluent gap widens as the threshold rises** — 4.3 points at 0, 7.8 at 0.30, 12.3 at 0.60.
+  NFR-06 allows 5, so retrieval alone breaches it at 0.30 and above. Exactly what the Governance Framework
+  predicts for retrieval-based systems, and now measured rather than assumed.
+- **D-22 re-measured on real chunks**, which this row owed: 0.3 still rejects 3.6% of expert claims when a
+  sentence is checked against the union of retrieved passages, but 9.1% when checked against the single
+  chunk it cites. Recorded as a design constraint for row 12.
+
+**Design decisions** (D-33 … D-35): the fingerprint identifies the embedder by its output; chunking is
+markdown sections with nothing dropped in silence; the sweep reports top-1 accuracy, precision against its
+own ceiling, and segment sizes.
+
+**Independent review** (reviewer subagent, PR-08 v1.0): 16 findings — 0 severe, 2 high, 9 medium, 5 low.
+Both highs fixed:
+- *High 1* — the index fingerprint was blind to the production embedder: `DefaultEmbeddingFunction.name()`
+  is `"default"` with an empty config, so a chromadb upgrade would have served a stale index built by a
+  different model. Now fingerprinted by embedding a probe string (D-33, T-FR10-21).
+- *High 2* — the sweep's "precision at k" mixed populations and had an unstated 70.5% ceiling, in the column
+  a human reads to choose the threshold. Fixed, with top-1 accuracy added (D-35).
+- Mediums fixed: fairness table gained denominators, a noise caveat and a tier breakdown; documents are no
+  longer dropped silently and `IndexStats.skipped` reports why; a duplicated `doc_id` keeps the first
+  occurrence instead of aborting the build; the merge rule now keeps the larger part's heading and says so;
+  the no-headings fallback no longer re-indexes the preamble it exists to drop; `RELEVANCE_THRESHOLD` and
+  `RETRIEVAL_TOP_K` are range-checked; the recorded-embeddings fixture is verified (chunker version,
+  dimensions, coverage, probe) and a missing fixture now **fails** instead of skipping FR-04's only real
+  test; `build_index` no longer leaks `ConfigError` or a splitter exception.
+- Thin tests strengthened: the overlap rule is asserted (setting the overlap to 0 now fails), the
+  chunker-version change is covered, T-FR10-12 runs over all 500 tickets, T-FR10-20 is no longer vacuous,
+  and passages are checked against `resolve()` field by field.
+- Lows fixed: the scripts read their paths from `.env` rather than hardcoding file names, the committed
+  report uses repository-relative paths and names the fingerprint, and the spec's `heading` type and `Chunk`
+  fields now match the code.
+
+**Not fixed, on purpose**
+- `CHUNK_ID_PATTERN` is not enforced in production. An unseen corpus may use another `doc_id` style, and
+  refusing it would lose articles for a cosmetic reason. Documented in the spec.
+- FR-10 §5's decision-log row is not written here; row 14 wires the pipeline, and the backlog carries it so
+  retrieval cannot end up as the one stage with no row.
+- One Chroma teardown crash (`recursive_mutex lock failed` at interpreter exit) after the report was
+  written; a rerun exits 0 and it has not recurred. Recorded in FR-10 §7.
+
+**Open questions for the human** (FR-10 §7)
+1. The threshold value is yours at row 7 — and it is a fairness decision as well as a quality one.
+2. Section chunking cannot answer a question whose answer spans two sections; a parent-document strategy
+   would. Worth measuring at row 7 before adding the complexity.
+3. No check can tell whether the placeholder 0.0 was replaced with a considered value; the row 6 metrics
+   report will print the threshold in use so a gate run shows it.
