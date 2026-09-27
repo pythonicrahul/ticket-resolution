@@ -35,6 +35,7 @@ certifi==2026.7.22
     #   httpcore
     #   httpx
     #   kubernetes
+    #   langchain-openai
     #   requests
 charset-normalizer==3.5.1
     # via requests
@@ -130,10 +131,13 @@ kubernetes==36.0.3
     # via chromadb
 langchain-core==1.6.5
     # via
+    #   langchain-openai
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
     #   langgraph-sdk
+langchain-openai==1.6.6
+    # via ticketing-agent
 langchain-protocol==0.0.19
     # via
     #   langchain-core
@@ -174,7 +178,9 @@ oauthlib==3.3.1
 onnxruntime==1.30.0
     # via chromadb
 openai==3.19.2
-    # via ticketing-agent
+    # via
+    #   langchain-openai
+    #   ticketing-agent
 opentelemetry-api==1.45.0
     # via
     #   chromadb
@@ -275,12 +281,15 @@ referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
+regex==2026.9.10
+    # via tiktoken
 requests==2.34.2
     # via
     #   kubernetes
     #   langsmith
     #   requests-oauthlib
     #   requests-toolbelt
+    #   tiktoken
 requests-oauthlib==2.0.0
     # via kubernetes
 requests-toolbelt==1.0.0
@@ -316,6 +325,8 @@ tenacity==9.1.4
     #   langchain-core
 threadpoolctl==3.7.0
     # via scikit-learn
+tiktoken==0.14.0
+    # via langchain-openai
 tokenizers==0.23.2
     # via chromadb
 tqdm==4.70.1

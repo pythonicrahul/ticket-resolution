@@ -302,3 +302,84 @@ omission: without it the Governance confidence-floor guardrail cannot be demonst
 **Left for the author** (`docs/pack_alignment.md` §4): the risk register R-01…R-08 with named owners, the
 six-step incident response, the governance declaration, the kill-switch answers, a retention policy for the
 log, and whether the FR-01 handover summary may carry customer text.
+
+## 2026-09-27 · Row 4 · Provider client · FR-15 (with D-31: LangGraph, LangChain, Pydantic)
+
+**Files changed**
+- `docs/specs/FR-15.md` (new): settings, the response and failure types, six ordered rules, failure
+  behaviour, 45 acceptance tests, 5 open questions.
+- `src/ticketing_agent/provider.py`: `ProviderClient` (retries, deterministic backoff, an explicit
+  circuit-breaker state machine, a persistent cache), `LangChainTransport`, `FakeTransport`, the typed
+  failure hierarchy, and `complete_structured()` returning validated Pydantic objects.
+- `src/ticketing_agent/schemas.py` (new): one Pydantic model per prompt (`AnswerDraft`, `HandoverNote`,
+  `GroundingCheck`), the JSON-from-prose extractor and `parse_into`.
+- `src/ticketing_agent/config.py`: real `Settings` + `load_settings`, `ConfigError`, no hardcoded model
+  or data paths, loud failures on malformed values.
+- `tests/test_fr15_provider.py`, `tests/test_fr15_structured_output.py` (new): T-FR15-1 … T-FR15-45.
+- `.env.example`: `MODEL_NAME` now shows the `:free` endpoint with a warning, `BREAKER_*` added,
+  `DATABASE_URL` replaced by the `DECISION_LOG_PATH` that `load_settings` actually reads.
+- `pyproject.toml` / `uv.lock` / `requirements.txt`: `langchain-openai~=1.6.6` added.
+- `docs/decisions.md` D-31, D-32; `docs/BACKLOG.md` rows 4 (DONE), 11, 13, 14.
+
+**Result**: `uv run pytest -q` → 157 passed (110 at the first green, 85 before this row).
+`uv run ruff check .` → clean. No network, no API key, no model call in any test.
+
+**The author's direction, and how it was applied** (D-31). Asked for LangGraph, Pydantic and optionally
+LangChain instead of vanilla plumbing. A sweep first: `langchain-openai` 1.6.6 resolves with our pins on
+Python 3.14, and a `StateGraph` over a Pydantic state with conditional edges works (node exceptions
+propagate, so the harness must still wrap each ticket). The division: **LangChain makes the calls**
+(`ChatOpenAI`, temperature 0, `max_retries=0`), **Pydantic validates the replies** (`schemas.py`, with the
+prompts' own rules as validators), **LangGraph arrives at row 14**, and **FR-15's guarantees stay ours** —
+the retry schedule, the backoff cap, the breaker and the prompt-version-keyed cache — because A11, NFR-08
+and NFR-07 are requirements no library implements for us, and because `FakeTransport` then exercises that
+code for real in every test instead of replacing it.
+
+**Independent review** (reviewer subagent, PR-08 v1.0): 23 findings — 3 severe, 6 high, 8 medium, 6 low.
+All three severes were the same shape: an untyped exception escaping `complete()`, which a caller's
+`except ProviderFailure` would not catch and which would therefore stop the run rather than one ticket.
+- *Severe 1* — a non-dict element in `choices` gave `AttributeError`. `_usable_text` now checks shape
+  before content (T-FR15-21).
+- *Severe 2* — a corrupt cache row gave `JSONDecodeError`. Now a counted miss (T-FR15-22).
+- *Severe 3* — a negative `Retry-After` gave `ValueError` from `time.sleep`, and a huge one would have
+  slept for an hour inside one ticket, defeating the A11 bound. Every wait is now clamped to
+  `[0, 60] s` (T-FR15-24).
+- *High 4* — an unwritable cache path killed the client at construction, so zero tickets would be
+  processed. It now degrades to no cache, with `cache_available` false (T-FR15-25).
+- *High 5* — the cache-hit path could raise and counted a hit for an answer it never returned. An
+  unusable stored reply is now dropped and refetched (T-FR15-23).
+- *High 6* — the half-open trick primed `consecutive_failures` to `threshold - 1`, which left
+  `circuit_open` reporting true for ever after a bad-key episode and could trip the breaker on one later
+  timeout. Replaced by an explicit `closed / open / half_open` state machine (D-32, T-FR15-26).
+- *High 7* — cache read failures were swallowed uncounted, silently turning NFR-08 off. Now
+  `cache_read_failures`.
+- *High 8* — a hardcoded model name and two hardcoded data paths in `config.py`, against CLAUDE.md's
+  first non-negotiable; and the bare OpenRouter id is the **paid** endpoint, so a missing `MODEL_NAME`
+  would have spent money. All three now have no default and refuse to start.
+- *High 9* — `_number` silently substituted the default for `LLM_MAX_RETRIES=three` or a mistyped
+  threshold. Now `ConfigError`, with range checks so no env var can switch the breaker off.
+- Mediums fixed: per-call `provider_requests` for FR-13's per-row `model_calls` (a run total would have
+  multiplied it); `attempts`/`elapsed_ms`/`prompt_version` as attributes on the exceptions rather than
+  text to parse; request counting rather than completion counting for the free tier; 402/404/422 mapped
+  to `ProviderError` so a retired model id is not reported as an outage; the SDK error mapping now tested
+  by constructing SDK-shaped exceptions (T-FR15-31…33); `check_same_thread=False` plus a lock for the API;
+  `base_url` in the cache key; `model`/`model_version`/timeout/`max_tokens` assertions; a cached reply
+  served while the circuit is open; the cache file checked for readable customer text.
+- Lows fixed: `from None` on mapped provider errors so a 4xx body cannot reach a traceback; `.env`
+  parsing handles `export ` and one matching quote pair; paths resolved so the cache does not depend on
+  the working directory; dead `_TRUE`/`extra` removed; `model=` override so the PR-05 judge is reachable;
+  docstrings name their requirements; D-31/D-32 recorded.
+
+**Not fixed, on purpose**
+- The real transport is still not exercised against a live provider. The **mapping** is tested by
+  constructing SDK-shaped exceptions, which is the part with judgement in it, but the SDK's own exception
+  types could change on a version bump. Recorded in FR-15 §7.
+- The breaker is per client instance, not per model, so one dead model would open the circuit for the
+  judge model too. Nothing calls two models in one run yet (FR-15 §7).
+- No cache TTL: reproducibility beats freshness for an assessed run (FR-15 §7).
+
+**Open questions for the human** (FR-15 §7)
+1. Confirm the `MODEL_NAME` free-tier id against OpenRouter's current catalogue — `.env.example` now
+   carries the `:free` suffix, but availability changes and the bare id bills.
+2. No cache expiry: confirm reproducibility over freshness.
+3. Per-model breakers, if the judge model lands before row 17.
+4. Nothing tracks the remaining free-tier allowance; a token counter belongs with the metrics report (row 6).

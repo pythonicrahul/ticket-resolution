@@ -258,3 +258,45 @@ so reading the pack did not become a quiet PRD edit. Everything found sits in `d
 was fixed in code, what was fixed in the specs, what the Stage 5 revision must record (A12 exists and was
 untraced; the pack contradicts itself on whether the hidden set is 100 or 120 tickets), and the document work
 only the author can do (risk register, incident response, the declaration, the kill-switch answers, retention).
+
+## D-31 · LangGraph, LangChain and Pydantic, with the FR-15 guarantees kept in our own code
+Decided by the author, 2026-09-27: use LangGraph for the pipeline, LangChain for the model calls and
+Pydantic for the replies, because hand-rolled plumbing is fragile. A sweep confirmed the versions fit:
+`langchain-openai` 1.6.6 resolves with `openai` 3.19.2, `langchain-core` 1.6.5, `langgraph` 1.2.12 and
+`pydantic` 2.13.5 on Python 3.14, and a `StateGraph` over a Pydantic state with conditional edges works
+(node exceptions propagate, so the harness still wraps each ticket).
+
+How the pieces divide, which is the part worth recording:
+
+* **LangChain makes the calls.** `LangChainTransport` wraps `ChatOpenAI` with `temperature=0`,
+  `max_retries=0` and our timeout. LangChain owns the wire format and the message types.
+* **FR-15's guarantees stay ours.** The retry schedule, the backoff cap, the circuit breaker and the
+  prompt-version-keyed cache are not delegated, because A11 ("disconnect the provider entirely; the system
+  degrades and continues"), NFR-08 (same input, same answer) and NFR-07 (zero spend) are requirements no
+  library implements for us, and because `FakeTransport` then exercises that code for real in every test
+  rather than replacing it. A client that leaned on LangChain's own retry would have left the code FR-15 is
+  about untested.
+* **Pydantic is where the fragility actually was.** `schemas.py` holds one model per prompt, matching the
+  JSON shape the prompt text promises, and the validators enforce the prompts' own rules: a supported
+  sentence must carry its quote (PR-03 rule 3), an unanswerable draft must say why (PR-01 rule 3), a
+  handover must have both a summary and an uncertainty (FR-01). Parsing tolerates the prose and code
+  fences models add, reports unexpected fields instead of dropping them silently, and allows exactly one
+  repair attempt whose message never echoes the bad reply back into a prompt.
+* **LangGraph arrives at row 14**, with a Pydantic state object, which is also where the pipeline must be
+  shown to route every action through `DecisionLog.perform` (FR-13 §7).
+
+## D-32 · The breaker is a state machine, and nothing untyped leaves the provider client (FR-15)
+The row 4 review found three ways an untyped exception could escape `complete()` — a non-dict element in
+`choices` (`AttributeError`), a corrupt cache row (`JSONDecodeError`) and a negative `Retry-After`
+(`ValueError` from `time.sleep`) — each of which would have stopped a run, because a caller catching
+`ProviderFailure` would not catch them and the harness's per-ticket guard cannot help with an exception it
+was never told about. Every entry point now raises only `ProviderFailure` or `ValueError`, `_usable_text`
+checks shape before content, the cache swallows and **counts** its own failures (including an unopenable
+cache, which now degrades to no cache instead of killing the run), and every wait is clamped to
+`[0, 60] s` so a hostile `Retry-After` can neither crash nor stall the run.
+
+The breaker was also a counter pretending to be a state: half-open primed `consecutive_failures` to
+`threshold - 1`, which left `circuit_open` reporting `True` for ever after a bad-key episode and could trip
+the breaker on a single later timeout. It is now an explicit `closed / open / half_open` state with the
+counter as evidence rather than a lever, a half-open trial gets exactly one attempt, and any failure
+re-opens it whatever its type.
