@@ -70,3 +70,36 @@ open for the rest of the build. It now opens only for `BLOCKED`, which is the do
 `/next-feature` leaves a red suite uncommitted, and it resolves the backlog path relative to itself rather
 than the current directory. It remains a gate that editing a file can open, so it is not load-bearing for
 FR-12: the system's guardrails live in `src/` where no flag, env var or file edit can switch them off.
+
+## D-12 · The decision log is keyed on a row id, not on ticket_id (FR-13, FR-07)
+Decided by the author, 2026-09-27, resolving the first open question in `docs/specs/FR-07.md`. Ingest keeps a
+duplicate `ticket_id` exactly as supplied and records `duplicate_ticket_id`; it never rewrites an id into
+something (`DEV-0001#2`) that exists in no operator's system and could surface in a handover or a reply. For
+that to reconcile, the log rows carry a surrogate primary key with `ticket_id` and `source_index` as columns,
+and FR-13's reconciliation compares row count and `source_index` coverage against the input file rather than
+counting distinct ids. Defensive only: dev and validation hold 500 and 80 distinct ids with no overlap.
+
+## D-13 · An unrecognised channel escalates, and the metrics report counts them (FR-07, FR-14)
+Decided by the author, 2026-09-27. A channel outside the four named in FR-07 gives `channel = "unknown"`,
+which is blocking, so the ticket escalates before any model call: we cannot reason about the text conventions
+of a channel nobody described, and a fifth channel may not be a customer at all. If the unseen file contains
+one, the cost is escalation rate (target ≤30%), not a wrong answer. So that this is visible rather than
+mysterious, the metrics report counts `unknown_channel` tickets as their own line; a count above zero is the
+evidence that would justify relaxing the rule.
+
+## D-14 · An over-long ticket is escalated, not answered from its first 8000 characters (FR-07, FR-09)
+Decided by the author, 2026-09-27. The `MAX_TEXT_CHARS` cap (8000) stays as prompt safety, and routing
+escalates any ticket carrying `text_truncated`. The longest subject+body in the 580 supplied tickets is 276
+characters, so anything hitting the cap is ~30x out of distribution: far more likely a thread dump, a log
+paste or an injection attempt than a question, and answering its first 8000 characters would answer half a
+question, which is the "confidently and incorrectly" failure in the PRD risk register. `text_truncated` is
+deliberately **not** in `BLOCKING_DEFECTS`: `is_malformed` means "no usable representation", whereas this is a
+routing policy, and the agent receives the whole `body` in the handover.
+
+## D-15 · Labels are optional and the metrics report states what it scored (FR-14, FR-07)
+Decided by the author, 2026-09-27. A ticket file with no `labels` block is valid input, since FR-14 says the
+harness runs on any ticket file. The harness always computes the metrics that need no ground truth —
+escalation rate, citation presence, disclosure line, guardrail blocks, reconciliation, runtime, segment
+splits — prints `scored against labels: N of M`, and marks the accuracy sections not computable when labels
+are absent. `ground_truth_responses.json` is not a fallback: it is 200 rows keyed by development ticket ids,
+so using it would silently change what is being measured between files.

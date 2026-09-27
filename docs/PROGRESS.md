@@ -35,3 +35,31 @@ Finding 15 accepted as a gap: the second half of the PRD criterion ("malformed t
 2. Is blocking on an unknown channel right, or should a fifth channel be answerable?
 3. The 8000-character `text` cap has no requirement behind it (longest supplied body: 245 characters).
 4. `labels`/`history` are treated as optional, since the unseen input file may omit them; the metrics report will have to say which tickets could not be scored.
+
+## 2026-09-27 · Decision note · the four FR-07 open questions, answered
+
+Not a backlog row: the author answered the open questions left by row 1. Recorded as `docs/decisions.md`
+D-12 … D-15, and `docs/specs/FR-07.md` §7 is now "Resolved questions" rather than open ones.
+
+1. **Duplicate ticket ids** → keep the supplied id and flag the row; the decision log is keyed on a surrogate
+   row id with `ticket_id` and `source_index` columns (D-12). Constrains row 3.
+2. **Unknown channel** → stays blocking, and the metrics report counts `unknown_channel` tickets so a fifth
+   channel shows up as a line rather than an unexplained escalation rate (D-13). Constrains row 6.
+3. **The 8000-character cap** → stays, and routing escalates any ticket carrying `text_truncated`; it is not
+   made a blocking ingest defect, because `is_malformed` means "no usable representation" while this is a
+   routing policy (D-14). Constrains row 9.
+4. **Labels** → optional; the harness always computes the label-free metrics and prints
+   `scored against labels: N of M` (D-15). `ground_truth_responses.json` is not a fallback (dev ids only).
+   Constrains row 6.
+
+Rows 3, 6 and 9 in `docs/BACKLOG.md` now carry these constraints in their item text, so the session that
+builds each one sees them without reading this log.
+
+No FR-07 code changed: each answer is either the behaviour already implemented and tested (T-FR07-7,
+T-FR07-8, T-FR07-10, T-FR07-11) or a constraint on a later row. `uv run pytest -q` → 32 passed;
+`uv run ruff check .` → clean.
+
+**Data note while checking these:** CLAUDE.md records 42 validation tickets duplicating development text;
+exact subject+body matching gives 45. The instruction is unchanged (do not tune against individual validation
+tickets) but the overlap is slightly larger than the note says, so validation scores flatter the system a
+little more than recorded. Worth a line in the Stage 5 revision.

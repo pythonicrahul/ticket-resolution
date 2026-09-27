@@ -8,13 +8,13 @@ Only the loop changes TODO → DONE/BLOCKED/HUMAN. Only a human changes BLOCKED/
 |---|---|---|---|---|---|
 | 1 | B-02 Ingest and normalise four channels | FR-07 | — | build | DONE |
 | 2 | B-17 Synthetic test tickets (PII, injection, refund/dispute, malformed, empty) in tests/fixtures/ | FR-03, FR-07, FR-12 | 1 | build | TODO |
-| 3 | B-10 Decision log (SQLite, Governance schema, reconciliation helper) | FR-13 | 1 | build | TODO |
+| 3 | B-10 Decision log (SQLite, Governance schema, reconciliation helper). Rows keyed on a surrogate id with ticket_id + source_index columns; reconcile on row count and source_index coverage (D-12) | FR-13 | 1 | build | TODO |
 | 4 | Provider client: timeout, retries, backoff, circuit breaker, response cache, fake provider for tests | FR-15 | — | build | TODO |
 | 5 | B-03/B-04 Chunking, Chroma index, retrieval with relevance threshold; threshold sweep script writing evaluation/reports/retrieval_sweep.md | FR-10 | 1 | build | TODO |
-| 6 | B-05 Harness: --input/--output, per-ticket isolation, metrics.json + metrics.md with segment tables, stub pipeline | FR-14 | 1, 3 | build | TODO |
+| 6 | B-05 Harness: --input/--output, per-ticket isolation, metrics.json + metrics.md with segment tables, stub pipeline. Report counts unknown_channel tickets (D-13), always computes the label-free metrics and prints 'scored against labels: N of M' (D-15) | FR-14 | 1, 3 | build | TODO |
 | 7 | CHECKPOINT: retrieval threshold choice. Summarise the sweep and recommend a value | FR-10 | 5, 6 | checkpoint | TODO |
 | 8 | B-06 Intent + urgency classifier with calibration table (cross-validated on dev) | FR-08, FR-05 | 1 | build | TODO |
-| 9 | B-07 Routing: must-escalate rules, billing/money rule, kill switch, confidence threshold sweep | FR-09, FR-03, FR-16, FR-02 | 3, 8 | build | TODO |
+| 9 | B-07 Routing: must-escalate rules (including any ingest blocking defect and text_truncated, D-14), billing/money rule, kill switch, confidence threshold sweep | FR-09, FR-03, FR-16, FR-02 | 3, 8 | build | TODO |
 | 10 | CHECKPOINT: confidence threshold choice. Summarise the sweep and the trade-off, recommend a value | FR-02 | 9 | checkpoint | TODO |
 | 11 | B-08 Answer drafting with citations (PR-01) and disclosure line | FR-11, FR-06 | 4, 5 | build | TODO |
 | 12 | B-09 Guardrails: PII, integrity, commitments, grounding (PR-03 + exact-quote check) | FR-12 | 2, 11 | build | TODO |
