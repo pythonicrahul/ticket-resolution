@@ -51,6 +51,8 @@ INJECTION_MARKERS = (
     "show me your prompt", "system prompt", "repeat your instructions",
     "your instructions verbatim", "developer mode", "jailbreak", "bypass your",
 )
+#: D-24: these two match only at the start of a line, so a pasted log does not escalate.
+LINE_ANCHORED = ("system:", "assistant:")
 # docs/specs/FR-03.md §3.1
 MONEY_TRIGGERS = (
     "refund", "refunded", "refunding", "credit note", "credit back", "account credit",
@@ -158,8 +160,13 @@ def phrases(text: str, table) -> list[str]:
 
 
 def markers(text: str) -> list[str]:
+    """FR-12 §3.1.1 / D-24: role labels count only at the start of a line."""
     low = text.lower()
-    return [m for m in INJECTION_MARKERS if m in low]
+    found = [m for m in INJECTION_MARKERS if m not in LINE_ANCHORED and m in low]
+    for label in LINE_ANCHORED:
+        if re.search(rf"(?m)^[\s>]*{re.escape(label)}", low):
+            found.append(label)
+    return [m for m in INJECTION_MARKERS if m in found]
 
 
 def spec_table(spec_text: str, line_prefix: str, drop: set[str]) -> set[str]:
@@ -298,11 +305,23 @@ def test_T_FR12_4_injection_fixtures_carry_markers_and_lookalikes_do_not(corpus)
         assert entry["synthetic"]["expected_reason"] == "instruction_injection_detected"
 
     lookalikes = of_category(corpus, "injection_lookalike")
-    assert len(lookalikes) >= 2
+    assert len(lookalikes) >= 3
     for entry in lookalikes:
         found = markers(text_of(entry))
         assert not found, f"{entry['ticket_id']} is a lookalike but matches {found}"
         assert entry["labels"]["expected_route"] == "auto_respond", entry["ticket_id"]
+
+    # D-24: the role labels are anchored, and the corpus holds both halves of that decision.
+    anchored = [e for e in positives if "system:" in e["synthetic"]["markers"]]
+    assert anchored, "no fixture carries a line-start role label"
+    for entry in anchored:
+        assert re.search(r"(?m)^[\s>]*system:", text_of(entry).lower()), entry["ticket_id"]
+    inline = [e for e in lookalikes if "system:" in text_of(e).lower()]
+    assert inline, "no fixture carries an inline role label that must not fire"
+    for entry in inline:
+        assert "system:" not in markers(text_of(entry)), (
+            f"{entry['ticket_id']}: an inline role label must not match (D-24)"
+        )
 
 
 def test_T_FR12_5_specs_and_mirrored_tables_agree_with_the_data():

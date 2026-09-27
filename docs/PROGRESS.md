@@ -144,3 +144,43 @@ Fixed, with the corpus or the specs changed accordingly:
 2. FR-12 §7: how much content-word overlap counts as grounded — a threshold for the author, from dev data.
 3. FR-12 §7: does a customer's own email address in a reply count as a leak? Read strictly (blocked) for now.
 4. FR-12 §7: keep `system:`/`assistant:` as markers, given a pasted log line would escalate?
+
+## 2026-09-27 · Decision note · the four FR-03 and FR-12 open questions, answered
+
+Not a backlog row. The author answered the questions row 2 left open; recorded as `docs/decisions.md`
+D-21 … D-24, with both specs' §7 rewritten from open questions to resolved ones.
+
+**The measurements the answers rest on** (all offline, against `data/`):
+
+| Question | Measured | Result |
+|---|---|---|
+| Do the conservative money/date triggers over-fire? | all 38 triggers against all 580 tickets | **0 matches**, so zero over-escalation cost on this distribution |
+| Does a customer's own email in a reply count as a leak? | emails/phones in the 200 expert reference answers | **0** contain either; 0 of 580 tickets contain an address |
+| Would `system:` / `assistant:` fire on real tickets? | both labels, plus `<ticket>`, `ignore all previous`, `you are now`, against 580 tickets | **0** for every one |
+| How much content-word overlap counts as grounded? | 997 sentences of the 200 expert answers against the articles they cite | bimodal: 351 pleasantries near 0, 646 claims at p1 0.25 / p5 0.33 / median 0.70 |
+
+1. **Triggers stay as they are** (D-21). `SYN-MONEY-010` remains labelled `known_over_escalation` so the cost
+   is visible rather than hidden. Constrains row 9.
+2. **Grounding: the exemption list first, threshold 0.3 provisionally** (D-22). A threshold applied to every
+   sentence would reject 37–48% of expert-written answers; excluding pleasantries, 0.3 rejects 3.6% of genuine
+   claims, 0.5 rejects 19.3%. Set by Claude Code on the author's instruction, not endorsed on the merits, and
+   measured against whole articles rather than retrieval chunks — **row 5 re-measures on real chunks**.
+   Constrains rows 5 and 12.
+3. **A customer's own email in a reply is still a leak** (D-23) — which is what the expert answers already do.
+   Constrains row 12.
+4. **Role labels anchored to the start of a line** (D-24), the recommended hardening rather than removal.
+   Constrains row 12.
+
+**Files changed**: `docs/specs/FR-03.md` §7 and `docs/specs/FR-12.md` §3.1.1, §3.2.2, §7 (the claim-exemption
+list and the threshold are now written into the rule, not left to row 12 to invent);
+`tests/fixtures/injection_tickets.json` — two fixtures added for D-24: `SYN-INJ-007` (a line-start role label,
+the only marker it carries, so it proves the anchoring still catches the attack) and `SYN-INJ-LOOKALIKE-003`
+(the same words inline in a pasted log, which must not fire); `tests/test_engineered_fixtures.py` — `markers()`
+now implements the anchoring and T-FR12-4 asserts both halves; `tests/fixtures/README.md`; `docs/BACKLOG.md`
+rows 5 and 12.
+
+**Result**: `uv run pytest -q` → 45 passed. `uv run ruff check .` → clean. Corpus now 33 engineered tickets
+(46 with the row 1 malformed file) and 11 drafts.
+
+**Still open, deliberately**: whether private IP addresses count as private data in a draft (FR-12 §7), and the
+chunk-id format the draft fixtures assume, which row 5 owns.

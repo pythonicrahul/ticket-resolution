@@ -149,3 +149,46 @@ classes of FR-09 rather than every escalation. The corpus convention is the more
 tests, but anything that mixes the two sources — a fairness table, an FR-09 count, the metrics report — has to
 account for the difference. Recorded in `tests/fixtures/README.md` as well, where whoever writes those tables
 will be looking.
+
+## D-21 · The conservative money and date triggers stay as they are (FR-03)
+Decided by the author, 2026-09-27, on measured evidence: **0 of the 580 supplied tickets** (500 development,
+80 validation) match any of the 25 money or 13 date triggers, so the over-escalation the spec worried about
+(`dispute`, `promise`, `compensation`, `waive`, bare `eta`) costs nothing on this distribution. The zero cuts
+both ways: the rule is entirely untested by real traffic, and its first live firing will be its first real
+test, so `SYN-MONEY-010` ("any ETA on the docs update?") stays in the corpus labelled
+`known_over_escalation` as the honest example of the cost. Revisit if a run escalates a ticket labelled
+`auto_respond` for a money or date reason.
+
+## D-22 · Grounding: the exemption list is the substance, and the overlap threshold is 0.3 provisionally (FR-12)
+Set by Claude Code on the author's instruction ("configure as per your understanding for now"), from a
+measurement over the 200 expert reference answers and the articles they cite — so it is a working default the
+author has not yet endorsed on the merits, not a considered threshold choice.
+
+A content-word overlap threshold applied to every sentence would reject 37–48% of what CloudServe's own
+senior agents wrote, which would make the check unusable. The distribution is bimodal and the split is clean:
+of 997 expert sentences, 351 are pleasantries and meta-sentences ("Thank you for getting in touch", "I would
+suggest starting with the checks listed there") carrying no claim at all, and the 646 genuine claims sit much
+higher (p1 0.25, p5 0.33, median 0.70). So **defining what counts as a claim comes first**; FR-12 §3.2.2 lists
+the exemptions. Against the claim-bearing sentences only, 0.3 rejects 3.6%, 0.4 rejects 6.7% and 0.5 rejects
+19.3%. 0.3 is chosen: the overlap check is a cheap floor against invention, and NFR-03's ≤5% hallucination
+budget rests on the PR-03 judgement rather than on word counting.
+
+Provisional for a specific reason: the measurement used **whole articles**, while retrieval will return
+narrower chunks, which will push overlap down. Row 5 must measure again on real chunks, and the author
+confirms or changes the number then.
+
+## D-23 · A customer's own email address in a reply is still a leak (FR-12, NFR-04)
+Decided by the author, 2026-09-27. NFR-04's "zero private data in outbound replies" is read strictly: the
+draft is blocked even when the customer supplied the address themselves, because a reply may be read by others
+on the account, and the guardrail blocks rather than redacts. The strict reading matches expert practice
+exactly — **0 of the 200 expert reference answers** contain an email address or phone number — and costs
+nothing on this data, since 0 of 580 tickets contain an address either. `SYN-PII-003` is the only fixture that
+exercises it.
+
+## D-24 · The role-label markers are anchored to the start of a line (FR-12)
+Decided by the author, 2026-09-27. `system:` and `assistant:` stay on the injection marker list but match only
+at the start of a line (after optional whitespace or a `>` quote marker). A role label at a line start is what
+an injected transcript looks like; the same words inline are ordinary customer prose, and a pasted log line
+("restart requested by system: worker-3") is the obvious false positive. Neither label appears in any of the
+580 supplied tickets, so the anchoring has no measured cost. Both halves are held by fixtures:
+`SYN-INJ-007` (line start, must escalate) and `SYN-INJ-LOOKALIKE-003` (inline, must not).
