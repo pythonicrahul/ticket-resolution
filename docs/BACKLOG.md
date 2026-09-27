@@ -6,7 +6,7 @@ Only the loop changes TODO → DONE/BLOCKED/HUMAN. Only a human changes BLOCKED/
 
 | # | Item | Requirements | Depends on | Kind | Status |
 |---|---|---|---|---|---|
-| 1 | B-02 Ingest and normalise four channels | FR-07 | — | build | TODO |
+| 1 | B-02 Ingest and normalise four channels | FR-07 | — | build | DONE |
 | 2 | B-17 Synthetic test tickets (PII, injection, refund/dispute, malformed, empty) in tests/fixtures/ | FR-03, FR-07, FR-12 | 1 | build | TODO |
 | 3 | B-10 Decision log (SQLite, Governance schema, reconciliation helper) | FR-13 | 1 | build | TODO |
 | 4 | Provider client: timeout, retries, backoff, circuit breaker, response cache, fake provider for tests | FR-15 | — | build | TODO |
