@@ -13,8 +13,10 @@ CLAUDE.md makes them non-negotiable:
   still written**, because FR-12's acceptance criterion is that the block is *recorded*.
   Redaction here is about the log; the reply itself is still blocked, never redacted (NFR-04).
 
-The field list is a reconstruction: the Governance Framework document is not in this
-repository. See docs/specs/FR-13.md §7 — it is the first thing to check against the source.
+The columns implement the Governance Framework's "minimum record" (Capstone_Pack
+03_Reference/Governance_Framework.docx §1) field for field. `governance_record()` emits a row
+in exactly that document's shape, which is what an assessor opens. The stage and action
+vocabularies are the framework's; this module adds a few stages it does not name.
 """
 from __future__ import annotations
 
@@ -31,11 +33,15 @@ from typing import Any, Self, TypeVar
 
 SCHEMA_VERSION = 1
 
-#: Terminal decisions end a ticket; `continue` rows explain how one was reached (§3.1).
+#: Terminal decisions end a ticket. `block` and `continue` do not: a blocked reply still ends
+#: as an escalation, so it is recorded and then followed by a terminal row (§3.1).
 TERMINAL_DECISIONS = frozenset({"auto_respond", "escalate"})
-DECISIONS = TERMINAL_DECISIONS | {"continue"}
-STAGES = frozenset({"ingest", "classify", "retrieve", "route", "generate", "guardrails",
-                    "handover", "pipeline"})
+#: The Governance Framework's `action_taken` vocabulary, plus `continue` for the intermediate
+#: audit rows it does not name.
+DECISIONS = TERMINAL_DECISIONS | {"block", "continue"}
+#: The framework names four stages; ingest, retrieval, handover and pipeline are ours.
+FRAMEWORK_STAGES = frozenset({"classification", "routing", "generation", "validation"})
+STAGES = FRAMEWORK_STAGES | {"ingest", "retrieval", "handover", "pipeline"}
 
 #: Free-text log fields are capped: `detail` should name a pattern, not carry a draft, and an
 #: unbounded value would put the scrub below on the write path for no reason (§3.2).
@@ -87,18 +93,24 @@ class DecisionEntry:
     reason: str | None = None
     all_reasons: Sequence[str] = ()
     detail: str | None = None
+    explanation: str | None = None
     summary: str | None = None
     uncertainty: str | None = None
+    prediction_value: str | None = None
+    prediction_confidence: float | None = None
+    threshold_applied: float | None = None
     intent: str | None = None
     intent_confidence: float | None = None
     intent_alternatives: Sequence[Sequence[Any]] = ()
     urgency: str | None = None
     urgency_confidence: float | None = None
+    sources_used: Sequence[Sequence[Any]] = ()
     retrieved_doc_ids: Sequence[str] = ()
     citations: Sequence[str] = ()
     guardrail_results: Sequence[Sequence[Any]] = ()
     prompt_version: str | None = None
     model_name: str | None = None
+    model_version: str | None = None
     model_calls: int = 0
     cache_hits: int = 0
     latency_ms: float | None = None
@@ -155,15 +167,17 @@ class Reconciliation:
         )
 
 
-_JSON_COLUMNS = ("requirement_ids", "all_reasons", "intent_alternatives", "retrieved_doc_ids",
-                 "citations", "guardrail_results", "ingest_defects", "redactions")
+_JSON_COLUMNS = ("requirement_ids", "all_reasons", "intent_alternatives", "sources_used",
+                 "retrieved_doc_ids", "citations", "guardrail_results", "ingest_defects",
+                 "redactions")
 _BOOL_COLUMNS = ("kill_switch",)
-_SCRUBBED_COLUMNS = ("reason", "detail")
-_TRUNCATED_COLUMNS = ("reason", "detail", "summary", "uncertainty")
+_SCRUBBED_COLUMNS = ("reason", "detail", "explanation")
+_TRUNCATED_COLUMNS = ("reason", "detail", "explanation", "summary", "uncertainty")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS decisions (
     row_id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id       TEXT    NOT NULL UNIQUE,
     run_id            TEXT    NOT NULL,
     logged_at         TEXT    NOT NULL,
     schema_version    INTEGER NOT NULL,
@@ -174,18 +188,24 @@ CREATE TABLE IF NOT EXISTS decisions (
     reason            TEXT,
     all_reasons       TEXT    NOT NULL,
     detail            TEXT,
+    explanation       TEXT,
     summary           TEXT,
     uncertainty       TEXT,
+    prediction_value  TEXT,
+    prediction_confidence REAL,
+    threshold_applied REAL,
     intent            TEXT,
     intent_confidence REAL,
     intent_alternatives TEXT  NOT NULL,
     urgency           TEXT,
     urgency_confidence REAL,
+    sources_used      TEXT    NOT NULL,
     retrieved_doc_ids TEXT    NOT NULL,
     citations         TEXT    NOT NULL,
     guardrail_results TEXT    NOT NULL,
     prompt_version    TEXT,
     model_name        TEXT,
+    model_version     TEXT,
     model_calls       INTEGER NOT NULL DEFAULT 0,
     cache_hits        INTEGER NOT NULL DEFAULT 0,
     latency_ms        REAL,
@@ -199,6 +219,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     requirement_ids   TEXT    NOT NULL,
     redactions        TEXT    NOT NULL DEFAULT '[]'
 );
+CREATE INDEX IF NOT EXISTS idx_decisions_decision_id ON decisions (decision_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_ticket ON decisions (ticket_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_run ON decisions (run_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_run_index ON decisions (run_id, source_index);
@@ -416,6 +437,7 @@ class DecisionLog:
 
     def _row_values(self, entry: DecisionEntry) -> dict[str, Any]:
         values: dict[str, Any] = {
+            "decision_id": f"{self.run_id}:{uuid.uuid4().hex[:12]}",
             "run_id": self.run_id,
             "logged_at": _now(),
             "schema_version": SCHEMA_VERSION,
@@ -439,6 +461,10 @@ class DecisionLog:
                     cleaned.append(scrubbed)
                     redactions.extend(f"all_reasons:{name}" for name in found)
                 value = cleaned
+            if f.name == "retrieved_doc_ids" and not value and entry.sources_used:
+                # The framework records sources as doc_id plus score; the flat list of ids is a
+                # convenience for querying, so derive it rather than making callers repeat it.
+                value = [str(source[0]) for source in entry.sources_used if source]
             if f.name in _JSON_COLUMNS:
                 values[f.name] = json.dumps(_plain(value))
             elif f.name in _BOOL_COLUMNS:
@@ -462,6 +488,36 @@ class DecisionLog:
         except OSError:
             return False
         return True
+
+
+def governance_record(row: dict[str, Any]) -> dict[str, Any]:
+    """FR-13: one logged row in the Governance Framework's "minimum record" shape (§1).
+
+    The stored row is richer (segments, defects, cache hits) because the PRD and the other
+    specs need those. This is the projection an assessor reads, with the framework's own field
+    names and nesting, so the two can be compared without translation.
+    """
+    return {
+        "decision_id": row["decision_id"],
+        "timestamp": row["logged_at"],
+        "ticket_id": row["ticket_id"],
+        "stage": row["stage"],
+        "input_summary": row["summary"],
+        "model": {"name": row["model_name"], "version": row["model_version"]},
+        "prediction": {"value": row["prediction_value"],
+                       "confidence": row["prediction_confidence"]},
+        "alternatives": [{"value": value, "confidence": confidence}
+                         for value, confidence in row["intent_alternatives"]],
+        "sources_used": [{"doc_id": doc_id, "score": score}
+                         for doc_id, score in row["sources_used"]],
+        "threshold_applied": row["threshold_applied"],
+        "action_taken": row["decision"],
+        "reason": row["explanation"] or row["reason"],
+        "guardrail_results": {name: ("pass" if passed else "fail")
+                              for name, passed in row["guardrail_results"]},
+        "prompt_version": row["prompt_version"],
+        "requirement_ids": row["requirement_ids"],
+    }
 
 
 def _validate(entry: DecisionEntry) -> None:
@@ -488,6 +544,18 @@ def _validate(entry: DecisionEntry) -> None:
         raise InvalidDecision(
             f"{entry.ticket_id}: {entry.model_calls} model call(s) with no prompt_version; "
             "the log must say which prompt produced the output"
+        )
+    if entry.is_terminal and not (entry.explanation or "").strip():
+        raise InvalidDecision(
+            f"{entry.ticket_id}: a terminal decision needs an explanation a support manager "
+            "could read (Build Specification, Route: 'records the reason for the decision in "
+            "language a support manager could read')"
+        )
+    if entry.decision == "auto_respond" and entry.threshold_applied is None:
+        raise InvalidDecision(
+            f"{entry.ticket_id}: auto_respond with no threshold_applied. The Governance "
+            "Framework's confidence floor is only demonstrable if the threshold that was "
+            "applied is recorded (FR-02)"
         )
 
 

@@ -225,3 +225,36 @@ If the fallback cannot be written either — usually the same permission problem
 explicitly rather than pretending the row was saved. Everything raised is a `DecisionLogError`, never a bare
 `sqlite3.Error` or `OSError`, so the harness has one type to catch and cannot mistake an audit failure for an
 ordinary ticket failure. Opening the log and writing the `runs` table behave the same way.
+
+## D-28 · The decision log implements the Governance Framework's minimum record field for field (FR-13)
+The pack's `03_Reference/Governance_Framework.docx` §1 specifies the record, and it was read on 2026-09-27,
+after row 3 had been built against a reconstruction. Seven required things were missing: `decision_id`,
+`model.version`, a generic `prediction` block, `threshold_applied`, `sources_used` **with scores**, the `block`
+action, and a human-readable `explanation` distinct from the machine `reason`. The stage vocabulary was also
+ours rather than the framework's. All are now implemented, and `governance_record()` projects a stored row into
+exactly the framework's JSON so the two can be compared without translation (T-FR13-28).
+
+Two of them are now **enforced**, not merely available: an `auto_respond` row must carry `threshold_applied`,
+because the framework's confidence-floor guardrail is only demonstrable if the threshold that was applied is
+recorded; and every terminal row must carry `explanation`, because the framework asks for "a human readable
+explanation of why this action followed" and the Build Specification wants it "in language a support manager
+could read". A log that cannot answer those is not auditable, which is the whole point of FR-13.
+
+`block` is deliberately **not** terminal: a blocked reply is recorded as a block and the ticket still ends with
+an `escalate` row, so reconciliation's "exactly one terminal row" holds while the metrics report can still
+count "blocked by guardrails" as Build Spec §04 requires.
+
+## D-29 · There are five guardrails, with the framework's names (FR-12, FR-03)
+`Governance_Framework.docx` §4 names five: Private data, Grounding, Instruction integrity, Tone and scope,
+Confidence floor. The FR-12 spec had four and called the fourth `commitments`. It is now `tone_and_scope` —
+the framework's name, with commitments as its core — and `confidence_floor` is added: the routing threshold
+must actually have been applied, and a missing confidence is not a high one, which is also FR-02's rule. It
+reads the `threshold_applied` that FR-13 now requires, so the two requirements hold each other up: a reply
+cannot be released without evidence the floor was enforced. Row 12 implements; the specs and backlog carry it.
+
+## D-30 · Findings from the source documents are recorded, not silently folded into the PRD (process)
+`docs/PRD.md` is source of truth #1 and its own front matter says changes go through the Stage 5 revision log,
+so reading the pack did not become a quiet PRD edit. Everything found sits in `docs/pack_alignment.md`: what
+was fixed in code, what was fixed in the specs, what the Stage 5 revision must record (A12 exists and was
+untraced; the pack contradicts itself on whether the hidden set is 100 or 120 tickets), and the document work
+only the author can do (risk register, incident response, the declaration, the kill-switch answers, retention).

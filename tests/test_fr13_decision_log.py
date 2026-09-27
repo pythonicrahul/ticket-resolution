@@ -1,4 +1,4 @@
-"""FR-13 acceptance tests T-FR13-1 … T-FR13-27 (docs/specs/FR-13.md).
+"""FR-13 acceptance tests T-FR13-1 … T-FR13-31 (docs/specs/FR-13.md).
 
 Offline: no network, no API key, no model calls. Every test uses a temporary database path,
 so nothing is hardcoded and no test touches storage/.
@@ -11,12 +11,14 @@ import pytest
 
 from ticketing_agent.ingest import evaluation_labels, normalise_ticket
 from ticketing_agent.logging_store import (
+    FRAMEWORK_STAGES,
     MAX_TEXT_FIELD,
     SCHEMA_VERSION,
     DecisionEntry,
     DecisionLog,
     DecisionLogUnavailable,
     InvalidDecision,
+    governance_record,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,8 +30,10 @@ def entry(**overrides):
     fields = {
         "ticket_id": "SYN-BILL-001",
         "source_index": 0,
-        "stage": "route",
+        "stage": "routing",
         "decision": "auto_respond",
+        "explanation": "Answered from the billing documentation; confidence above the threshold.",
+        "threshold_applied": 0.7,
         "requirement_ids": ("FR-02",),
     }
     fields.update(overrides)
@@ -70,8 +74,13 @@ def test_T_FR13_2_every_field_round_trips(log):
         urgency="medium",
         urgency_confidence=0.61,
         intent_alternatives=(("quota_or_overage", 0.11), ("account_access", 0.04)),
-        retrieved_doc_ids=("DOC-BILL-001", "DOC-BILL-003"),
+        sources_used=(("DOC-BILL-001", 0.81), ("DOC-BILL-003", 0.44)),
         citations=("DOC-BILL-001#1",),
+        prediction_value="billing_query",
+        prediction_confidence=0.82,
+        threshold_applied=0.7,
+        explanation="Escalated because the customer asks for a refund, which needs a person.",
+        model_version="2026-05-01",
         guardrail_results=(("private_data", True), ("grounding", False)),
         prompt_version="PR-01 v1.0",
         model_name="test-model",
@@ -93,7 +102,11 @@ def test_T_FR13_2_every_field_round_trips(log):
     assert row["all_reasons"] == ["instruction_injection_detected", "money_commitment_requested"]
     assert row["intent_alternatives"] == [["quota_or_overage", 0.11], ["account_access", 0.04]]
     assert row["guardrail_results"] == [["private_data", True], ["grounding", False]]
-    assert row["retrieved_doc_ids"] == ["DOC-BILL-001", "DOC-BILL-003"]
+    assert row["sources_used"] == [["DOC-BILL-001", 0.81], ["DOC-BILL-003", 0.44]]
+    assert row["retrieved_doc_ids"] == ["DOC-BILL-001", "DOC-BILL-003"], "derived from sources"
+    assert row["threshold_applied"] == 0.7
+    assert row["prediction_value"] == "billing_query"
+    assert row["decision_id"].startswith("run-test:")
     assert row["requirement_ids"] == ["FR-03", "FR-09"]
     assert row["intent_confidence"] == 0.82
     assert row["latency_ms"] == 142.5
@@ -223,9 +236,12 @@ def test_T_FR13_10_a_clean_run_reconciles(log):
         log.record(DecisionEntry(
             ticket_id=ticket.ticket_id,
             source_index=ticket.source_index,
-            stage="route",
+            stage="routing",
             decision="escalate" if escalating else "auto_respond",
             reason="money_commitment_requested" if escalating else None,
+            explanation="Escalated: the customer asks for money back." if escalating
+            else "Answered from the billing documentation.",
+            threshold_applied=0.7,
             requirement_ids=("FR-03",),
             **ticket.log_fields_for_log(),
         ))
@@ -273,9 +289,9 @@ def test_T_FR13_12_duplicate_input_ids_reconcile_on_source_index(log):
 
 
 def test_T_FR13_13_continue_rows_are_not_terminal(log):
-    log.record(entry(stage="classify", decision="continue"))
-    log.record(entry(stage="retrieve", decision="continue"))
-    log.record(entry(stage="route", decision="auto_respond"))
+    log.record(entry(stage="classification", decision="continue"))
+    log.record(entry(stage="retrieval", decision="continue"))
+    log.record(entry(stage="routing", decision="auto_respond"))
 
     assert len(log.rows()) == 3
     assert len(log.terminal_rows()) == 1
@@ -354,7 +370,7 @@ def test_T_FR13_17_two_stores_on_one_path_both_write(tmp_path):
 
 def test_T_FR13_18_the_store_adds_nothing_that_breaks_determinism(tmp_path):
     """NFR-08: the same decision logged in two runs differs only in bookkeeping."""
-    volatile = {"row_id", "logged_at", "run_id"}
+    volatile = {"row_id", "decision_id", "logged_at", "run_id"}
     snapshots = []
     for run in ("run-1", "run-2"):
         path = tmp_path / f"{run}.db"
@@ -368,9 +384,9 @@ def test_T_FR13_18_the_store_adds_nothing_that_breaks_determinism(tmp_path):
 
 def test_T_FR13_22_aggregates_feed_the_metrics_report(log):
     """§3.4: NFR-07 counts every model call in the run; NFR-01 times each ticket."""
-    log.record(entry(stage="generate", decision="continue", model_calls=2, cache_hits=1,
+    log.record(entry(stage="generation", decision="continue", model_calls=2, cache_hits=1,
                      prompt_version="PR-01 v1.0", latency_ms=90.0))
-    log.record(entry(stage="route", decision="escalate", reason="low_confidence",
+    log.record(entry(stage="routing", decision="escalate", reason="low_confidence",
                      model_calls=1, cache_hits=3, prompt_version="PR-01 v1.0",
                      latency_ms=210.5))
     log.record(entry(ticket_id="SYN-BILL-002", source_index=1, decision="auto_respond",
@@ -450,8 +466,10 @@ def test_T_FR13_19_ingest_fields_reach_the_row_unchanged(log):
         "language_fluency": "fluent",
     }, index=7)
     log.record(DecisionEntry(
-        ticket_id=ticket.ticket_id, source_index=ticket.source_index, stage="route",
-        decision="auto_respond", requirement_ids=("FR-02",), **ticket.log_fields_for_log(),
+        ticket_id=ticket.ticket_id, source_index=ticket.source_index, stage="routing",
+        decision="auto_respond", threshold_applied=0.7,
+        explanation="Answered from the proration article.",
+        requirement_ids=("FR-02",), **ticket.log_fields_for_log(),
     ))
     row = log.rows()[0]
     assert (row["channel"], row["tier"], row["region"], row["fluency"]) == (
@@ -459,3 +477,81 @@ def test_T_FR13_19_ingest_fields_reach_the_row_unchanged(log):
     assert row["received_at"] == "2026-05-10T10:05:00Z"
     assert row["ingest_defects"] == ["missing_subject"]
     assert row["source_index"] == 7
+
+
+def test_T_FR13_28_governance_record_matches_the_frameworks_minimum_record(log):
+    """Governance Framework §1: the log must carry these fields, in this shape."""
+    log.record(entry(
+        stage="classification",
+        decision="escalate",
+        reason="money_commitment_requested",
+        explanation="Escalated because the customer asks for a refund, which needs a person.",
+        summary="Customer disputes an overage charge and asks for money back.",
+        prediction_value="billing_query",
+        prediction_confidence=0.82,
+        intent_alternatives=(("quota_or_overage", 0.11),),
+        sources_used=(("DOC-BILL-001", 0.81),),
+        threshold_applied=0.7,
+        guardrail_results=(("private_data", True), ("grounding", True), ("tone_and_scope", False)),
+        prompt_version="PR-02 v1.0",
+        model_name="test-model",
+        model_version="2026-05-01",
+        model_calls=1,
+        requirement_ids=("FR-03", "FR-13"),
+    ))
+    record = governance_record(log.rows()[0])
+
+    assert set(record) == {
+        "decision_id", "timestamp", "ticket_id", "stage", "input_summary", "model", "prediction",
+        "alternatives", "sources_used", "threshold_applied", "action_taken", "reason",
+        "guardrail_results", "prompt_version", "requirement_ids",
+    }
+    assert record["stage"] in FRAMEWORK_STAGES
+    assert record["action_taken"] in {"auto_respond", "escalate", "block"}
+    assert record["model"] == {"name": "test-model", "version": "2026-05-01"}
+    assert record["prediction"] == {"value": "billing_query", "confidence": 0.82}
+    assert record["alternatives"] == [{"value": "quota_or_overage", "confidence": 0.11}]
+    assert record["sources_used"] == [{"doc_id": "DOC-BILL-001", "score": 0.81}]
+    assert record["guardrail_results"] == {"private_data": "pass", "grounding": "pass",
+                                           "tone_and_scope": "fail"}
+    assert record["reason"].startswith("Escalated because"), "the framework wants it readable"
+    assert record["requirement_ids"] == ["FR-03", "FR-13"]
+    assert record["threshold_applied"] == 0.7
+    assert record["input_summary"].startswith("Customer disputes")
+
+
+def test_T_FR13_29_a_blocked_reply_is_recorded_and_is_not_terminal(log):
+    """The framework's action_taken includes `block`; the ticket still ends escalated."""
+    log.record(entry(stage="validation", decision="block", reason="private_data_in_draft",
+                     detail="pattern: email", requirement_ids=("FR-12", "NFR-04")))
+    log.record(entry(decision="escalate", reason="private_data_in_draft",
+                     explanation="Blocked: the draft repeated a customer's email address.",
+                     requirement_ids=("FR-12",)))
+
+    assert [r["decision"] for r in log.rows()] == ["block", "escalate"]
+    assert len(log.terminal_rows()) == 1
+    tickets = [normalise_ticket({"ticket_id": "SYN-BILL-001", "channel": "email",
+                                 "subject": "s", "body": "b"}, index=0)]
+    report = log.reconcile(tickets)
+    assert report.ok, report
+    assert report.counts_by_decision == {"escalate": 1}, "a block does not end a ticket"
+
+
+@pytest.mark.parametrize(("overrides", "match"), [
+    ({"threshold_applied": None}, "threshold_applied"),
+    ({"explanation": None}, "explanation"),
+])
+def test_T_FR13_30_the_governance_conditions_are_enforced(log, overrides, match):
+    """A row that cannot demonstrate the confidence floor or explain itself is a bad call."""
+    with pytest.raises(InvalidDecision, match=match):
+        log.record(entry(**overrides))
+    assert log.rows() == []
+
+
+def test_T_FR13_31_sources_used_carries_scores(log):
+    """Retrieve must record ranked passages with scores (Build Specification, Retrieve)."""
+    log.record(entry(sources_used=(("DOC-API-001", 0.62), ("DOC-API-002", 0.31))))
+    row = log.rows()[0]
+    assert row["sources_used"] == [["DOC-API-001", 0.62], ["DOC-API-002", 0.31]]
+    assert row["retrieved_doc_ids"] == ["DOC-API-001", "DOC-API-002"]
+    assert governance_record(row)["sources_used"][0] == {"doc_id": "DOC-API-001", "score": 0.62}

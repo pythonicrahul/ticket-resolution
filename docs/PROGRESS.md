@@ -258,3 +258,47 @@ Both highs were real and are fixed:
 3. Retention: nothing says how long the log is kept, and a compliance reviewer will ask.
 4. `continue` rows mean 5–8 rows per ticket; fine locally, worth noting at CloudServe's real volume.
 5. Confirm that a log failure stopping the run is the trade you want (D-27).
+
+## 2026-09-27 · Alignment · the pack's source documents, read and applied · FR-12, FR-13, FR-03
+
+Not a backlog row. The author pointed at `~/Downloads/FDE_Capstone_Complete/Capstone_Pack`, which contains the
+three documents this repo had only been citing second-hand: the Governance Framework, the Build Specification
+and the Evaluation Framework. `docs/specs/FR-13.md` §7 had flagged the Governance field list as a
+reconstruction and asked for exactly this check.
+
+**The reconstruction was incomplete.** The framework's §1 minimum record required seven things the schema did
+not have — `decision_id`, `model.version`, a generic `prediction` block, `threshold_applied`, `sources_used`
+with scores, the `block` action, and a human-readable `explanation` separate from the machine `reason` — and
+the stage vocabulary was ours (`classify`, `route`, `generate`, `guardrails`) rather than the framework's
+(`classification`, `routing`, `generation`, `validation`). `threshold_applied` was the most consequential
+omission: without it the Governance confidence-floor guardrail cannot be demonstrated at all.
+
+**Files changed**
+- `src/ticketing_agent/logging_store.py`: the seven fields, the framework's stage and action vocabularies, and
+  `governance_record()` which projects a row into the framework's exact JSON shape. Two new validation rules:
+  an `auto_respond` row must carry `threshold_applied`, and every terminal row must carry `explanation`.
+- `docs/specs/FR-13.md`: §1 now cites the framework and A8; §2 documents the new fields; §3.1 adds `block` as a
+  non-terminal action; §3.2 adds rules 7 and 8; §6 adds T-FR13-28 … T-FR13-31; §7's first open question is
+  resolved.
+- `docs/specs/FR-12.md`: **five** guardrails with the framework's names and its own table —
+  `commitments` → `tone_and_scope`, plus a new `confidence_floor`. `docs/specs/FR-03.md` follows the rename.
+- `tests/test_fr13_decision_log.py`: updated to the framework vocabulary; T-FR13-28 (the minimum record, key
+  for key), T-FR13-29 (a block is recorded and is not terminal), T-FR13-30 (the two new rules), T-FR13-31
+  (scores travel with sources) added.
+- `docs/pack_alignment.md` (new): every difference found, what was done, what Stage 5 must record, and the
+  document work only the author can do.
+- `docs/BACKLOG.md`: rows 6, 8, 9, 12, 15 and 18 now carry what the pack requires of them.
+- `docs/decisions.md` D-28 … D-30.
+
+**Result**: `uv run pytest -q` → 85 passed (80 before). `uv run ruff check .` → clean.
+
+**Two things the author should know**
+1. **A12 exists.** The PRD cites A1–A11; the Build Specification lists twelve criteria, and A12 is "tests run
+   with a single documented command and pass". The repo satisfies it, but the requirement was untraced.
+2. **The pack contradicts itself on the hidden set size** — Build Spec §04 says 120 tickets, §08 and the
+   Evaluation Framework say 100. Nothing in the build depends on it (the harness takes a path and processes
+   whatever it finds), but the report should not state a number as fact.
+
+**Left for the author** (`docs/pack_alignment.md` §4): the risk register R-01…R-08 with named owners, the
+six-step incident response, the governance declaration, the kill-switch answers, a retention policy for the
+log, and whether the FR-01 handover summary may carry customer text.
