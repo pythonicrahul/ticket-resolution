@@ -192,3 +192,36 @@ an injected transcript looks like; the same words inline are ordinary customer p
 ("restart requested by system: worker-3") is the obvious false positive. Neither label appears in any of the
 580 supplied tickets, so the anchoring has no measured cost. Both halves are held by fixtures:
 `SYN-INJ-007` (line start, must escalate) and `SYN-INJ-LOOKALIKE-003` (inline, must not).
+
+## D-25 · The decision log redacts what it must not store, and writes the row anyway (FR-13, FR-12, NFR-04)
+The first version of the log rejected any row whose `reason` or `detail` looked like it contained private
+data. The row 3 review showed that is reachable from ticket data, not just from a coding mistake: FR-12 §3.2.2
+defines `detail` as including "the unsupported sentence", and an ungrounded sentence can perfectly well contain
+an email address. Rejecting the row would mean a guardrail block with **no log row at all** — breaking FR-12's
+acceptance criterion ("the block is recorded in the decision log") and NFR-05's 100% for exactly the tickets
+NFR-04 cares most about.
+
+So the store now redacts: the value becomes `[redacted:{pattern}]`, the pattern name goes into a `redactions`
+column, and the row is written. Validation still *raises* for the six call-site mistakes (no requirement ids,
+unknown decision or stage, escalation with no reason, model call with no prompt version, blank ticket id),
+none of which ticket data can cause. The distinction is the point: **a wrong call fails loudly, wrong content
+is cleaned and recorded.** Redaction here is about the log only — the reply itself is still blocked, never
+redacted, which is what NFR-04 demands.
+
+## D-26 · Reconciliation counts terminal rows, indexed by source_index, cross-checked against the run record (FR-13)
+`auto_respond` and `escalate` are terminal: exactly one per ticket is what "logged decisions reconcile exactly
+with tickets processed" means. `continue` rows are intermediate audit records and are not counted. Three
+things make the check hard to fool: `source_index` coverage is authoritative (D-12), so duplicate ticket ids
+reconcile honestly; a ticket with **no** index is reported rather than skipped, because otherwise one
+forgotten `index=` argument would quietly turn the key off; and `start_run`'s `tickets_in` is compared against
+the list handed to `reconcile`, so a ticket lost *before* that list was built cannot pass as ok. An id counts
+as duplicated only when it has more terminal rows than the input had copies.
+
+## D-27 · A log that cannot be written stops the run, and never loses the decision (FR-13, NFR-05)
+One ticket failing must never stop a run (CLAUDE.md), but a log that cannot be written is not one ticket
+failing: it breaks FR-13 and NFR-05 for every ticket in the run, and a per-ticket `except` would carry on
+producing unauditable work. So the store retries once, appends the row to `<db>.fallback.jsonl`, and raises.
+If the fallback cannot be written either — usually the same permission problem — the exception says so
+explicitly rather than pretending the row was saved. Everything raised is a `DecisionLogError`, never a bare
+`sqlite3.Error` or `OSError`, so the harness has one type to catch and cannot mistake an audit failure for an
+ordinary ticket failure. Opening the log and writing the `runs` table behave the same way.

@@ -184,3 +184,77 @@ rows 5 and 12.
 
 **Still open, deliberately**: whether private IP addresses count as private data in a draft (FR-12 §7), and the
 chunk-id format the draft fixtures assume, which row 5 owns.
+
+## 2026-09-27 · Row 3 · B-10 Decision log · FR-13
+
+**Files changed**
+- `docs/specs/FR-13.md` (new): the reconstructed Governance field set, terminal vs `continue` rows, validation,
+  the redaction rule, reconciliation, failure behaviour, 27 acceptance tests, 5 open questions.
+- `src/ticketing_agent/logging_store.py`: `DecisionEntry`, `DecisionLog` (SQLite, WAL, autocommit),
+  `Reconciliation`, `InvalidDecision`, `DecisionLogUnavailable`, JSONL fallback, redaction.
+- `src/ticketing_agent/ingest.py`: `Ticket.log_fields_for_log()`, derived from `log_fields()` so the two
+  cannot drift.
+- `tests/test_fr13_decision_log.py` (new): T-FR13-1 … T-FR13-27.
+- `docs/decisions.md` D-25 … D-27; `docs/BACKLOG.md` (row 3 DONE, row 14 annotated); `ATTRIBUTION.md`.
+
+**Tests added**: `test_T_FR13_1_schema_created_at_any_path`, `_2_every_field_round_trips`,
+`_3_requirement_ids_are_mandatory`, `_4_escalation_needs_a_reason`, `_5_a_model_call_needs_a_prompt_version`,
+`_6_private_data_is_redacted_and_the_row_is_still_written` (4 cases), `_7_vocabulary_is_enforced` (3 cases),
+`_8_the_row_is_committed_before_the_action`, `_9_a_failing_action_leaves_the_decision_logged`,
+`_10_a_clean_run_reconciles`, `_11_reconcile_reports_every_discrepancy`,
+`_12_duplicate_input_ids_reconcile_on_source_index`, `_13_continue_rows_are_not_terminal`,
+`_14_rows_persist_across_reopen`, `_15_a_failed_write_falls_back_and_raises`, `_16_no_way_to_skip_logging`,
+`_17_two_stores_on_one_path_both_write`, `_18_the_store_adds_nothing_that_breaks_determinism`,
+`_19_ingest_fields_reach_the_row_unchanged`, `_20_legitimate_details_are_not_redacted` (4 cases),
+`_21_an_over_long_detail_is_truncated_not_rejected`, `_22_aggregates_feed_the_metrics_report`,
+`_23_the_run_record_cross_checks_the_ticket_count`, `_24_finish_run_without_start_run_still_records`,
+`_25_tickets_without_a_source_index_are_reported`, `_26_durability_settings_are_pinned`,
+`_27_none_for_a_sequence_field_becomes_an_empty_list`.
+
+**Result**: `uv run pytest -q` → 80 passed (45 before this row). `uv run ruff check .` → clean.
+
+**Design decisions** (D-25 … D-27)
+- The log redacts private-looking content and writes the row anyway; only call-site mistakes raise (D-25).
+- Reconciliation counts terminal rows, keyed on `source_index`, cross-checked against `start_run`'s count, with
+  unindexed tickets reported rather than skipped (D-26).
+- A log that cannot be written stops the run, with a JSONL fallback, and everything raised is a
+  `DecisionLogError` so a per-ticket `except` cannot mistake it for one ticket failing (D-27).
+
+**Independent review** (reviewer subagent, PR-08 v1.0): 17 findings — 0 severe, 2 high, 8 medium, 7 low.
+Both highs were real and are fixed:
+- *High 1* — the fallback write was itself unprotected, so with an unwritable directory (permission denied,
+  disk full) the decision was preserved nowhere and a raw `PermissionError` escaped, which a per-ticket
+  `except` in the harness would have swallowed and carried on unlogged. Now every failure path returns a
+  `DecisionLogError`, the fallback failure is reported in the message, and opening the log and the `runs`
+  writes are protected the same way. Verified by reproducing the reviewer's `chmod 500` case.
+- *High 2* — `InvalidDecision` discarded the row entirely and was reachable from ticket data: an ungrounded
+  sentence containing an email address would have meant a guardrail block with no log row, breaking FR-12's
+  own acceptance criterion. Now redacted and recorded (D-25); T-FR13-6 asserts the stronger property and
+  T-FR13-20 asserts legitimate details survive.
+- Mediums fixed: `reconcile` cross-checks `start_run`'s `tickets_in`; tickets with no `source_index` are
+  reported instead of silently skipped; the scrub's false positives (`token: expired`, spaced single digits)
+  and its gap (`private key: …`, unscrubbed `all_reasons`) are both closed; run-table writes get retries and
+  typed errors, and `finish_run` creates the row if `start_run` never ran; the aggregates
+  (`model_calls`, `cache_hits`, `latencies_ms`, `counts_by_reason`) are now asserted, with the
+  all-rows/terminal-rows asymmetry documented as intentional; `log_fields_for_log` is derived from
+  `log_fields()`; T-FR13-16 now parses the module and asserts every `except` ends in a `raise`.
+- Lows fixed: linear regexes with a 4000-character bound (the scrub was 9.3 s on a 60 k detail and is now
+  ~4 ms at any size); `None` for a sequence field becomes `[]`; the `stage` rule added to the spec; docstrings
+  name their requirements; T-FR13-1 checks the `meta` row and the exact index names; T-FR13-2 checks `None`
+  stays `None`; T-FR13-10 reads ground truth through `evaluation_labels()`.
+
+**Not fixed, on purpose**
+- `record` stays public, so `perform` is the supported path rather than the only possible one. Making `record`
+  private would stop the harness writing intermediate rows. Recorded in FR-13 §7 and on backlog row 14, which
+  must assert the pipeline routes every action through `perform`.
+- The FR-01 `summary` is stored unscrubbed. It is derived from customer text, so it can carry PII, but it is
+  also what makes an escalation useful to Daniel. Open question for the author (FR-13 §7).
+
+**Open questions for the human** (in the spec)
+1. **The Governance Framework document is not in this repository**, so the field list is a reconstruction from
+   the PRD, CLAUDE.md and the FR-01/FR-03/FR-07/FR-12 specs. Check it against the source; if the real framework
+   names a field this omits, add it and bump `schema_version`.
+2. Should the FR-01 handover `summary` be scrubbed for private data too, or is the log an internal artefact?
+3. Retention: nothing says how long the log is kept, and a compliance reviewer will ask.
+4. `continue` rows mean 5–8 rows per ticket; fine locally, worth noting at CloudServe's real volume.
+5. Confirm that a log failure stopping the run is the trade you want (D-27).

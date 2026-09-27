@@ -96,6 +96,15 @@ class Ticket:
             **self.segments(),
         }
 
+    def log_fields_for_log(self) -> dict[str, Any]:
+        """FR-13: `log_fields()` as keyword arguments for a `DecisionEntry`.
+
+        Derived from `log_fields()` rather than re-listed, so a field added there reaches the
+        decision log instead of being silently dropped. `ticket_id` is passed by the caller
+        alongside its own decision, so it is the one key left out.
+        """
+        return {k: v for k, v in self.log_fields().items() if k != "ticket_id"}
+
 
 def evaluation_labels(ticket: Ticket) -> Mapping[str, Any]:
     """FR-14: the ground-truth block, for the harness only. Runtime code must not call this."""
