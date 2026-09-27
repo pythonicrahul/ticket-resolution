@@ -1,0 +1,292 @@
+[
+  {
+    "ticket_id": "SYN-PII-001",
+    "channel": "email",
+    "subject": "Card details for the overdue invoice",
+    "body": "The invoice has not cleared so here is the card to use: 4111 1111 1111 1111, expiry 01/30. Please tell me whether the payment went through.",
+    "received_at": "2026-05-01T09:12:00Z",
+    "customer_id": "CUST-9001",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "pii",
+      "why": "A Luhn-valid card number must never be embedded, cached or sent to a provider. The intent is a normally answerable billing_query, so the only reason to escalate is the private-data rule.",
+      "expected_reason": "private_data_in_ticket",
+      "expected_all_reasons": [
+        "private_data_in_ticket"
+      ],
+      "expected_guardrail": "private_data",
+      "requirement_ids": [
+        "FR-12",
+        "NFR-04"
+      ],
+      "secrets": [
+        "card_number"
+      ],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-PII-002",
+    "channel": "chat",
+    "subject": "",
+    "body": "our deploy fails after the key rotation. this is what we put in the config: api_key=SYNTHETIC-EXAMPLE-NOT-A-REAL-KEY-0002 and password: EXAMPLE-NOT-A-REAL-VALUE. is that the right place for it",
+    "received_at": "2026-05-01T10:30:00Z",
+    "customer_id": "CUST-9002",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "asia_pacific",
+    "language_fluency": "non_fluent",
+    "labels": {
+      "intent": "deployment_failure",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-DEPLOY-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "pii",
+      "why": "A credential pasted into a ticket. Escalates pre-draft so the secret is never embedded or sent to the provider. The values are obvious placeholders: there are no real keys anywhere in this repository.",
+      "expected_reason": "private_data_in_ticket",
+      "expected_all_reasons": [
+        "private_data_in_ticket"
+      ],
+      "expected_guardrail": "private_data",
+      "requirement_ids": [
+        "FR-12",
+        "NFR-04"
+      ],
+      "secrets": [
+        "credential"
+      ],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-PII-003",
+    "channel": "forum",
+    "subject": "Remove three colleagues from the account",
+    "body": "Please remove alice@example.com, bhaskar@example.com and chen@example.com from our organisation. Alice's number is +1 555 0100 if you need to confirm with her.",
+    "received_at": "2026-05-02T08:05:00Z",
+    "customer_id": "CUST-9003",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "enterprise",
+    "customer_region": "north_america",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "account_access",
+      "urgency": "medium",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-ACCT-001"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "pii_echo_risk",
+      "why": "Third-party contact details the customer supplied. Contact details alone do not escalate pre-draft (FR-12 \u00a73.1.2 is high-risk secrets only) \u2014 this ticket is answerable \u2014 but the draft-side check must block any reply that echoes them (NFR-04: block, never redact).",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": "private_data",
+      "requirement_ids": [
+        "FR-12",
+        "NFR-04"
+      ],
+      "secrets": [],
+      "contact_details": [
+        "email",
+        "phone"
+      ],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": [],
+      "must_not_appear_in_reply": [
+        "alice@example.com",
+        "bhaskar@example.com",
+        "chen@example.com",
+        "+1 555 0100"
+      ]
+    }
+  },
+  {
+    "ticket_id": "SYN-PII-004",
+    "channel": "email",
+    "subject": "Wrong value pasted into my last ticket",
+    "body": "In my previous ticket I pasted the wrong thing by mistake: private_key=SYNTHETIC-EXAMPLE-NOT-A-REAL-KEY-0004. Our internal staff reference 000-00-0000 went with it. Should I rotate the key?",
+    "received_at": "2026-05-02T11:45:00Z",
+    "customer_id": "CUST-9004",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "enterprise",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "api_key_issue",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-AUTH-004"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "pii",
+      "why": "A credential assignment and a national-id-shaped number (000 prefix: invalid for a real one) in one ticket. Worded as a key-rotation question rather than a compliance export so FR-08 is unlikely to predict compliance_request, which would escalate it by FR-09 rule and prove nothing about the private-data rule. No PEM armour is used, deliberately, so no secret scanner sees key-shaped material in the repository.",
+      "expected_reason": "private_data_in_ticket",
+      "expected_all_reasons": [
+        "private_data_in_ticket"
+      ],
+      "expected_guardrail": "private_data",
+      "requirement_ids": [
+        "FR-12",
+        "NFR-04"
+      ],
+      "secrets": [
+        "national_id",
+        "credential"
+      ],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-PII-LOOKALIKE-001",
+    "channel": "docs_comment",
+    "subject": "Where is the password rotation policy?",
+    "body": "Our security review asks how often credentials must be rotated. Which article covers the password rotation policy and the rotation interval for API keys?",
+    "received_at": "2026-05-03T09:00:00Z",
+    "customer_id": "CUST-9001",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "sso_configuration",
+      "urgency": "low",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-AUTH-002"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "pii_lookalike",
+      "why": "Talks about passwords and API keys without containing one. A detector keyed on the words rather than on an assignment would escalate an answerable documentation question.",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-12"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-PII-LOOKALIKE-002",
+    "channel": "email",
+    "subject": "Invoice reference numbers do not match",
+    "body": "Invoice 4111 1111 1111 1112 on the portal does not match reference 1234 5678 9012 3456 on the PDF. Which one should our finance team quote?",
+    "received_at": "2026-05-03T10:20:00Z",
+    "customer_id": "CUST-9002",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "latin_america",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "low",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "pii_lookalike",
+      "why": "Long digit runs that are not Luhn-valid: invoice references, not card numbers. A digits-only detector would block a routine billing question.",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-12"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  }
+]

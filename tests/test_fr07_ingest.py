@@ -1,7 +1,8 @@
 """FR-07 acceptance tests T-FR07-1 … T-FR07-22 (docs/specs/FR-07.md).
 
 Offline: no network, no API key. Real tickets come from data/, engineered ones from
-tests/fixtures/malformed_tickets.json.
+tests/fixtures/. T-FR07-23 lives in tests/test_engineered_fixtures.py with the rest of the
+corpus contract.
 """
 import dataclasses
 import json
@@ -22,6 +23,9 @@ from ticketing_agent.ingest import (
 ROOT = Path(__file__).resolve().parents[1]
 DEV_TICKETS = ROOT / "data" / "development_tickets.json"
 FIXTURE = ROOT / "tests" / "fixtures" / "malformed_tickets.json"
+#: Every engineered file, so T-FR07-20 covers the corpus row 2 added, not only the row 1 file.
+ENGINEERED = ("malformed_tickets.json", "pii_tickets.json", "injection_tickets.json",
+              "money_commitment_tickets.json")
 CHANNELS = ("email", "chat", "docs_comment", "forum")
 
 ZWSP, RLO, PDF, NUL, BOM = (chr(c) for c in (0x200B, 0x202E, 0x202C, 0x00, 0xFEFF))
@@ -303,12 +307,15 @@ def test_T_FR07_19_normalisation_error_escalates_without_leaking_ground_truth(mo
     assert evaluation_labels(ticket) == entry["labels"]  # still scorable by the harness
 
 
-def test_T_FR07_20_ground_truth_never_reaches_text(dev_entries, synthetic):
+def test_T_FR07_20_ground_truth_never_reaches_text(dev_entries):
     tickets = [normalise_ticket(e, index=i) for i, e in enumerate(dev_entries)]
-    tickets += [normalise_ticket(e, index=i) for i, e in enumerate(synthetic)]
+    for name in ENGINEERED:
+        entries = read_json(ROOT / "tests" / "fixtures" / name)
+        tickets += [normalise_ticket(e, index=i) for i, e in enumerate(entries)]
     for ticket in tickets:
         for marker in ("expected_route", "answerable_from_docs", "must_not_auto_respond",
-                       "first_contact_resolution", "csat_rating"):
+                       "first_contact_resolution", "csat_rating", "expected_reason",
+                       "expected_all_reasons", "expected_doc_ids"):
             assert marker not in ticket.text
 
 

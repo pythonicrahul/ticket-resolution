@@ -103,3 +103,49 @@ escalation rate, citation presence, disclosure line, guardrail blocks, reconcili
 splits — prints `scored against labels: N of M`, and marks the accuracy sections not computable when labels
 are absent. `ground_truth_responses.json` is not a fallback: it is 200 rows keyed by development ticket ids,
 so using it would silently change what is being measured between files.
+
+## D-16 · One fixed precedence for the pre-model escalation rules (FR-03, FR-07, FR-09, FR-12, FR-16)
+Several rules can fire on one ticket: `SYN-INJ-001` is an injection attempt *and* a refund request. Without a
+stated order, the reason written to the decision log depends on the order the code happens to evaluate in,
+which breaks determinism (NFR-08) and auditability (FR-13), and lets rows 9 and 12 each implement an order
+that makes the other's test fail. The order, highest first: `kill_switch` (FR-16), `private_data_in_ticket`
+(FR-12), `instruction_injection_detected` (FR-12), `malformed_ticket` (FR-07), `must_escalate_intent` (FR-09),
+`money_commitment_requested` then `date_commitment_requested` (FR-03), `text_truncated` (D-14), `no_retrieval`
+(FR-10), `low_confidence` (FR-02). Rationale for the top: an operator's kill switch outranks everything; a
+secret must not be embedded, cached or sent anywhere, so that decision is taken before the text is read for
+anything else; hostile text cannot be trusted for any other reading. The log carries `reason` (the primary)
+**and** `all_reasons` (every match, in this order), so nothing is lost. Table in `docs/specs/FR-12.md` §3.4.
+
+## D-17 · Injection markers are phrases, not words, and the lookalike fixtures are why (FR-12)
+The first FR-12 marker list carried bare `override`, `act as` and `your guidelines`. Writing the negative
+fixtures exposed them immediately: "how do I override the default retry interval" and "can a webhook act as a
+health check" are ordinary answerable questions that would have escalated, costing first-contact resolution
+for no safety gain — customer text is already confined to `<ticket>` tags and the multi-word markers still
+catch every engineered attack. The two questions are kept as `injection_lookalike` fixtures so the narrower
+list cannot quietly widen again. `system:` and `assistant:` are kept despite the same risk (a pasted log line
+would escalate), recorded as the marker most likely to over-fire on real tickets.
+
+## D-18 · Fixture expectations are derived from the fixture text, never hand-written (FR-03, FR-12)
+`expected_reason`, `expected_all_reasons` and the evidence lists (`secrets`, `contact_details`, `markers`,
+`money_triggers`, `date_triggers`) are computed from each ticket's own words by the corpus generator and
+checked again by the contract tests. The first hand-written version of the corpus claimed two triggers that
+its text did not contain — `SYN-INJ-001` claimed the marker "you are now" when the body said "you are a", and
+`SYN-MONEY-003` claimed "dispute" when the text said "disputing". A fixture that lies about itself is worse
+than no fixture, because the rule it is supposed to prove will be written to satisfy the lie.
+
+## D-19 · Engineered drafts ship with their retrieved passages (FR-12, FR-11)
+Four of FR-12's checks and the FR-03 reply-side rule act on a **draft**, not a ticket, so row 2 also builds
+`tests/fixtures/draft_replies.json`: eleven candidate replies, each carrying the passages it was supposedly
+written from. That lets row 12 test grounding, private data, commitments and prompt leakage with no Chroma
+index, no model call and no network. Drafts declare every check they should fail, in FR-12 §3.2 order, with
+the primary reason derived from the first — several fail two checks honestly, and saying so beats pretending
+each fixture isolates one rule. The `chunk_id` format (`DOC-BILL-001#1`) is provisional: row 5 owns it, and
+either adopts this convention or these fixtures are updated with the one it chooses.
+
+## D-20 · `must_not_auto_respond` means something narrower in the pack data than in this corpus
+In the engineered corpus the flag is exactly `expected_route == "escalate"`. In the supplied data it is not:
+87 of 189 escalate tickets carry it and 102 do not, because there it marks the four always-escalate intent
+classes of FR-09 rather than every escalation. The corpus convention is the more useful one for guardrail
+tests, but anything that mixes the two sources — a fairness table, an FR-09 count, the metrics report — has to
+account for the difference. Recorded in `tests/fixtures/README.md` as well, where whoever writes those tables
+will be looking.

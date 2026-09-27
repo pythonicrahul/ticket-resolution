@@ -1,0 +1,807 @@
+[
+  {
+    "ticket_id": "SYN-MONEY-001",
+    "channel": "email",
+    "subject": "Refund for last month's overage",
+    "body": "We were charged for overage after a traffic spike we had capped. Please refund the overage line on the invoice.",
+    "received_at": "2026-05-07T09:00:00Z",
+    "customer_id": "CUST-9001",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "quota_or_overage",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-003"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "A direct refund request. The intent (quota_or_overage) is answerable and would normally auto-respond, so escalation must come from the FR-03 money rule.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "refund"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-002",
+    "channel": "email",
+    "subject": "Credit note for the duplicated subscription",
+    "body": "We were billed twice for the same subscription in April. Please issue a credit note for the duplicate and confirm the amount.",
+    "received_at": "2026-05-07T10:10:00Z",
+    "customer_id": "CUST-9002",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "enterprise",
+    "customer_region": "north_america",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "A credit request needs a commitment about money, which is contractual (Daniel) and out of scope per the PRD.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "credit note"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-003",
+    "channel": "forum",
+    "subject": "Disputing this month's charges",
+    "body": "We are disputing the charges on this invoice and will raise a chargeback with our bank if it is not resolved this week.",
+    "received_at": "2026-05-08T08:30:00Z",
+    "customer_id": "CUST-9003",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "asia_pacific",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": false,
+      "expected_doc_ids": [],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "A dispute and a chargeback threat: never answerable automatically whatever the confidence.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "chargeback",
+        "disputing"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-004",
+    "channel": "email",
+    "subject": "SLA credit for Tuesday's outage",
+    "body": "Tuesday's degradation lasted four hours, which we read as an SLA breach. We are claiming the service credit set out in our contract.",
+    "received_at": "2026-05-08T09:45:00Z",
+    "customer_id": "CUST-9004",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "enterprise",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "performance_degradation",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-PERF-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "An SLA credit claim: money and a contractual judgement. Retrieval still runs so the handover carries the performance article.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested",
+        "date_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "service credit",
+        "sla credit"
+      ],
+      "date_triggers": [
+        "sla breach"
+      ]
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-005",
+    "channel": "chat",
+    "subject": "",
+    "body": "deploys still failing after your last update. when will this be fixed? we need a firm date to tell our customers.",
+    "received_at": "2026-05-09T09:20:00Z",
+    "customer_id": "CUST-9005",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "latin_america",
+    "language_fluency": "non_fluent",
+    "labels": {
+      "intent": "deployment_failure",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-DEPLOY-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "date_commitment",
+      "why": "Asks for a fix date. FR-03 escalates a request needing a commitment about dates, and the must_not_claim list forbids 'a specific delivery date for a fix'.",
+      "expected_reason": "date_commitment_requested",
+      "expected_all_reasons": [
+        "date_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": [
+        "when will this be fixed",
+        "firm date"
+      ]
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-006",
+    "channel": "email",
+    "subject": "Proration after our upgrade, and the difference",
+    "body": "Could you explain how proration was calculated when we upgraded mid-month? If the calculation is wrong, please refund the difference.",
+    "received_at": "2026-05-09T10:50:00Z",
+    "customer_id": "CUST-9006",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "north_america",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-002"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "The hard case: an explanatory proration question the docs answer, with a refund request attached. The answerable first half must not rescue it (T-FR03-4).",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "refund"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-007",
+    "channel": "forum",
+    "subject": "Compensation for the weekend throttling",
+    "body": "Our production traffic was throttled all weekend. We expect some compensation for the lost business and a goodwill gesture on next month's bill.",
+    "received_at": "2026-05-11T11:00:00Z",
+    "customer_id": "CUST-9007",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "enterprise",
+    "customer_region": "asia_pacific",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "quota_or_overage",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-003"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "Exercises the 'compensation' and 'goodwill' triggers, which FR-03 \u00a77 flags as the most likely to over-fire. Without a fixture the open question cannot be answered from evidence.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "compensation",
+        "goodwill"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-008",
+    "channel": "email",
+    "subject": "Late fee on an invoice we never received",
+    "body": "A late fee was added although the invoice never reached us. Please waive the fee and write off the outstanding balance.",
+    "received_at": "2026-05-11T12:15:00Z",
+    "customer_id": "CUST-9008",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "Exercises 'waive' and 'write off': a money commitment phrased as an administrative favour rather than a refund.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "waive",
+        "write off"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-009",
+    "channel": "chat",
+    "subject": "",
+    "body": "the api latency issue from last week is still there. do you have an eta for the fix?",
+    "received_at": "2026-05-12T09:05:00Z",
+    "customer_id": "CUST-9009",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "north_america",
+    "language_fluency": "non_fluent",
+    "labels": {
+      "intent": "performance_degradation",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-PERF-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "date_commitment",
+      "why": "Exercises the bare 'eta' trigger, which FR-03 \u00a77 flags: a plain ETA question, which under the current rule escalates.",
+      "expected_reason": "date_commitment_requested",
+      "expected_all_reasons": [
+        "date_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": [
+        "eta"
+      ]
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-010",
+    "channel": "docs_comment",
+    "subject": "Any ETA on the docs update?",
+    "body": "The article on retention still shows the old figure. Any ETA on the docs update, and can you promise it before our audit?",
+    "received_at": "2026-05-12T10:40:00Z",
+    "customer_id": "CUST-9010",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "onboarding",
+      "urgency": "low",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-DATA-002"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "known_over_escalation",
+      "why": "Honestly labelled: under FR-03 \u00a73.2 as written, this escalates, and arguably it should not \u2014 nobody is asking for a contractual commitment. It is the accepted cost of the conservative rule, recorded so the author can weigh it (FR-03 \u00a77) rather than discovering it in a run. Fixing the rule should flip this fixture to auto_respond, not delete it.",
+      "expected_reason": "date_commitment_requested",
+      "expected_all_reasons": [
+        "date_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": [
+        "eta",
+        "promise"
+      ],
+      "accepted_cost": "over-escalation of a low-stakes ETA question"
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-011",
+    "channel": "email",
+    "subject": "Charged for an environment we deleted",
+    "body": "We deleted the staging environment in March but were billed for it in April. We would like that money back, or at least to be reimbursed for the difference.",
+    "received_at": "2026-05-14T09:00:00Z",
+    "customer_id": "CUST-9011",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "Exercises the 'money back' and 'reimburse' family, which no other fixture reaches.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "money back"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-012",
+    "channel": "chat",
+    "subject": "",
+    "body": "we were double charged for the same api usage. can you reverse the charge and confirm the reversal on the next invoice",
+    "received_at": "2026-05-14T10:20:00Z",
+    "customer_id": "CUST-9012",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "latin_america",
+    "language_fluency": "non_fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "high",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "Exercises the 'reverse the charge' and 'reversal' family: a money commitment phrased as a correction.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "reverse the charge",
+        "reversal"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-BILL-001",
+    "channel": "email",
+    "subject": "Invoice higher than usual this month",
+    "body": "Our invoice this month is considerably higher than usual and the summary does not show me why. Where can I see the breakdown by service?",
+    "received_at": "2026-05-10T09:00:00Z",
+    "customer_id": "CUST-9001",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "medium",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "explanatory_billing",
+      "why": "Invoice lines: the first of the four explanatory kinds PRD FR-03 permits answering. An over-broad money rule fails here.",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-BILL-002",
+    "channel": "docs_comment",
+    "subject": "How proration works on an upgrade",
+    "body": "We upgraded mid-month and the charge differs from the advertised price. How is proration calculated over a partial period?",
+    "received_at": "2026-05-10T10:05:00Z",
+    "customer_id": "CUST-9002",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "asia_pacific",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "low",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-002"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "explanatory_billing",
+      "why": "Plans and proration: the second and third explanatory kinds PRD FR-03 names.",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-BILL-003",
+    "channel": "chat",
+    "subject": "",
+    "body": "when does my billing period end? the dates on the invoice do not line up with the calendar month",
+    "received_at": "2026-05-11T09:30:00Z",
+    "customer_id": "CUST-9003",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "north_america",
+    "language_fluency": "non_fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "low",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "explanatory_billing",
+      "why": "A factual question about a date, not a request for a commitment about one. The date rule must not fire: this is answerable from DOC-BILL-001.",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-BILL-004",
+    "channel": "email",
+    "subject": "Spend cap stopped a production workload",
+    "body": "Our spend cap stopped a production workload overnight. How do usage limits and overage work, and where do we raise the cap for production only?",
+    "received_at": "2026-05-13T09:00:00Z",
+    "customer_id": "CUST-9004",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "business",
+    "customer_region": "europe",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "quota_or_overage",
+      "urgency": "high",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-003"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "explanatory_billing",
+      "why": "Usage limits: the fourth explanatory kind PRD FR-03 permits, and the corner where the money rule is most likely to over-fire, since usage questions sit next to words like overage and charge.",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-BILL-005",
+    "channel": "forum",
+    "subject": "How long is the retention period?",
+    "body": "How long is the retention period for audit records, and is it configurable per environment?",
+    "received_at": "2026-05-13T10:30:00Z",
+    "customer_id": "CUST-9005",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "enterprise",
+    "customer_region": "asia_pacific",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "data_residency",
+      "urgency": "low",
+      "expected_route": "auto_respond",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-DATA-002"
+      ],
+      "must_not_auto_respond": false
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": false,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "explanatory_billing",
+      "why": "The second answerable example FR-03 \u00a73.2 names: a factual question containing a period, which the date rule must leave alone.",
+      "expected_reason": null,
+      "expected_all_reasons": [],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [],
+      "date_triggers": []
+    }
+  }
+]
