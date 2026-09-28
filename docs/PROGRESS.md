@@ -738,3 +738,72 @@ classification is tested.
 2. Per-intent thresholds would separate those two, and are a small change. Wanted before the gate or after?
 3. `feature_request` is 20 of 500 development tickets and escalates by rule (FR-09 §7). Still wanted, or
    should it get a templated policy answer?
+
+## 2026-09-28 · Row 10 · CHECKPOINT: the confidence threshold T · FR-02 · **awaiting the author**
+
+The analysis is `evaluation/reports/confidence_sweep.md`, regenerated today from
+`scripts/confidence_sweep.py` against the development set only. Nothing here sets a value: the placeholder
+`CONFIDENCE_THRESHOLD=0.80` in `.env` is still a placeholder, and D-43 records the trade-off.
+
+### What the sweep says
+
+| T | answered | escalated | answered against the label | answered on a wrong intent | **must-escalate answered** | fluency gap (NFR-06 limit 5) |
+|---|---|---|---|---|---|---|
+| 0.750 | 83.0% | 17.0% | 112 | 42 | **10** | 1.6 |
+| 0.800 | 78.6% | 21.4% | 105 | 26 | **9** | 2.5 |
+| 0.850 | 64.4% | 35.6% | 84 | 10 | 0 | **10.1** |
+| 0.900 | 43.0% | 57.0% | 62 | 2 | 0 | **13.8** |
+| 0.925 | 21.4% | 78.6% | 37 | 0 | 0 | 1.8 |
+
+Three things are true at once, and optimising any one of them alone picks a bad T.
+
+1. **T is not the escalation lever it looks like.** At T = 0 the threshold never fires and 17% of tickets
+   still escalate, on rules T cannot move (FR-09's four intents, FR-03's money and date triggers, FR-07's
+   defects, FR-10 returning nothing). The sweep's right-hand column counts only the tickets whose *sole*
+   reason to escalate is confidence — that is the population T governs.
+2. **FR-09's rule is exact, but it fires on the predicted intent.** On grouped out-of-fold predictions, 10 of
+   500 tickets labelled `must_not_auto_respond` would be auto-answered: nine `security_incident` read as
+   `account_access` or `api_key_issue`, one `unclear_request` read as `database_issue`. Every one states
+   between 0.7929 and 0.8452 confidence, so **T ≥ 0.85 catches all ten** and T = 0.80 catches one. The report
+   names the ten tickets. The PRD's "zero auto-responses to must-escalate tickets" is met by the rule itself
+   and by any run over data the classifier was trained on; on unseen wording, T is what stands behind it.
+3. **The T values that look best on wrong answers breach NFR-06, and sit in the badly calibrated band.** The
+   fluent/non-fluent answer-rate gap is 10.1 points at T = 0.85 and 13.8 at T = 0.90, against NFR-06's
+   5-point limit (populations 380 and 120). And the confidence being thresholded is **42.6 points out of
+   calibration in the 0.60–0.80 band** — 25 predictions stating 78.6% that are right 36.0% of the time
+   (D-40) — which is exactly the band the ten leaking tickets sit in.
+
+`answered against the label` (112 at T = 0.75, 84 at T = 0.85) is a different population from the ten:
+those are tickets the pack labels `escalate` for reasons no implemented rule covers — complexity and urgency
+judgements. No T removes them; they are an argument for the rules the PRD has not asked for, not for a
+higher floor.
+
+### The options, as I read them
+
+- **T = 0.85** — no must-escalate ticket answered on unseen wording, 64.4% answered, and an NFR-06 breach on
+  fluency that has to be declared. Safe on the criterion the PRD states most strongly; expensive elsewhere.
+- **T = 0.80 (keep the placeholder)** — 78.6% answered, inside NFR-06 at 2.5 points, and ~1.8% of
+  must-escalate tickets answered on unseen wording. Defensible only if the guardrails (row 12) are treated as
+  the real second line of defence, since a misread `security_incident` would still have to survive grounding
+  and tone checks before going out.
+- **T = 0.90 or above** — buys almost nothing over 0.85 on the leak, costs half the answers, worsens the
+  fairness gap. Not worth it on this data.
+- **Per-intent or targeted floors** — e.g. a higher floor for tickets where a must-escalate intent is among
+  the alternatives FR-08 already records. This could close the leak without the global cost, and it is a small
+  change. **It is unmeasured**: the out-of-fold alternatives are not saved, so I cannot say today how many of
+  the ten it would catch. I can measure it if you want it before the gate.
+
+**Recommendation**: **T = 0.85**, and declare the NFR-06 fluency gap in the PRD revision rather than hide it —
+the PRD's own words for FR-09 are "zero auto-responses", and a 2% leak of security incidents is the one
+failure Marcus and Daniel both described. If a 64% answer rate is unacceptable for the business case, the
+honest fix is targeted floors, not a lower global T.
+
+**Row 10 set to `HUMAN`. The value is yours.** Whatever you choose, the PRD revision should record the leak
+measurement (D-43), because it is the strongest single finding in the build so far.
+
+**Separately, two configuration items for you** (found while checking whether a real provider call was safe):
+`MODEL_NAME` is `meta-llama/llama-3.1-8b-instruct`, which on OpenRouter is the **paid** endpoint — NFR-07
+wants the `:free` suffix — and `JUDGE_MODEL_NAME` is still the `.env.example` placeholder. No real model call
+has been made by anything in this repository yet (`storage/llm_cache.sqlite` does not exist), and row 11 is
+the first code that needs one.
+
