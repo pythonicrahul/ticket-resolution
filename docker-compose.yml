@@ -1,0 +1,117 @@
+# The system, plus the three things that make it legible while it runs:
+#
+#   api          the support system itself            http://localhost:8000/docs
+#   decisions    the decision log, in a browser       http://localhost:8080   (read-only)
+#   prometheus   scrapes the API's metrics            http://localhost:9090
+#   grafana      the dashboard from ops/, provisioned http://localhost:3000   (anonymous)
+#
+#   docker compose up --build            everything
+#   docker compose run --rm train        fit the classifier (needed once, before the API answers)
+#   docker compose run --rm gate         a full unattended evaluation run
+#
+# The key is never baked into an image: `env_file` reads your .env at run time, and .dockerignore
+# excludes it from the build context. `storage/` is a named volume shared by the services that
+# need it, so the decision log the API writes is the one the viewer shows.
+
+services:
+  api:
+    build: .
+    image: ticketing-agent:local
+    env_file: [.env]
+    environment:
+      # Paths point inside the container; everything else comes from .env.
+      DOCS_PATH: /app/data/documentation.json
+      TRAINING_TICKETS_PATH: /app/data/development_tickets.json
+      CLASSIFIER_PATH: /app/storage/classifier.joblib
+      CHROMA_PATH: /app/storage/chroma
+      DECISION_LOG_PATH: /app/storage/decisions.db
+      LLM_CACHE_PATH: /app/storage/llm_cache.sqlite
+      KILL_SWITCH_FILE: /app/storage/KILL_SWITCH
+    ports: ["8000:8000"]
+    volumes:
+      - storage:/app/storage
+      - ./evaluation/results:/app/evaluation/results
+    restart: unless-stopped
+
+  # Train the classifier into the shared volume. The API refuses to start answering without it,
+  # deliberately: a missing model is a setup error, not a silent fallback.
+  train:
+    build: .
+    image: ticketing-agent:local
+    env_file: [.env]
+    environment:
+      TRAINING_TICKETS_PATH: /app/data/development_tickets.json
+      CLASSIFIER_PATH: /app/storage/classifier.joblib
+    volumes:
+      - storage:/app/storage
+    profiles: ["tools"]
+    command: ["python", "scripts/train_classifier.py"]
+
+  # A full unattended run, writing its report to ./evaluation/results on the host.
+  gate:
+    build: .
+    image: ticketing-agent:local
+    env_file: [.env]
+    environment:
+      DOCS_PATH: /app/data/documentation.json
+      CLASSIFIER_PATH: /app/storage/classifier.joblib
+      CHROMA_PATH: /app/storage/chroma
+      DECISION_LOG_PATH: /app/storage/decisions.db
+      LLM_CACHE_PATH: /app/storage/llm_cache.sqlite
+      KILL_SWITCH_FILE: /app/storage/KILL_SWITCH
+    volumes:
+      - storage:/app/storage
+      - ./evaluation/results:/app/evaluation/results
+    profiles: ["tools"]
+    command:
+      - python
+      - -m
+      - evaluation.harness
+      - --input
+      - /app/data/validation_tickets.json
+      - --output
+      - /app/evaluation/results/docker-run
+
+  # Every decision the system took, browsable. **Read-only** (-r): this is the audit record, and
+  # a viewer that can edit it is not an audit record (NFR-05).
+  decisions:
+    image: coleifer/sqlite-web:latest
+    depends_on: [api]
+    environment:
+      SQLITE_DATABASE: decisions.db
+    volumes:
+      - storage:/data
+    ports: ["8080:8080"]
+    command: ["sqlite_web", "-H", "0.0.0.0", "-x", "-r", "/data/decisions.db"]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    depends_on: [api]
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+    ports: ["9090:9090"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    depends_on: [prometheus]
+    environment:
+      # Anonymous viewing, because this is a demonstration stack on a laptop. Anything exposed
+      # beyond localhost needs a password and the governance declaration should say so.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/grafana_dashboard.json
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana_dashboard.json:/var/lib/grafana/dashboards/grafana_dashboard.json:ro
+      - grafana:/var/lib/grafana
+    ports: ["3000:3000"]
+    restart: unless-stopped
+
+volumes:
+  storage:
+  prometheus:
+  grafana:

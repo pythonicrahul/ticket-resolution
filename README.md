@@ -39,6 +39,40 @@ cached by prompt and content, so a second run over the same tickets is nearly fr
 **Stopping it.** `touch storage/KILL_SWITCH` stops every automatic reply from the next ticket
 onwards; every ticket then escalates with that reason recorded. Delete the file to resume (FR-16).
 
+## Run it with Docker
+
+`docker compose up --build` brings up the system and three windows into it:
+
+| | | |
+|---|---|---|
+| the support system | <http://localhost:8000/docs> | submit a ticket, search, the escalation queue |
+| the decision log | <http://localhost:8080> | every decision, browsable, **read-only** |
+| Prometheus | <http://localhost:9090> | what it scraped |
+| Grafana | <http://localhost:3000> | the dashboard in `ops/`, already provisioned |
+
+Two one-off jobs sit behind a profile, so `up` never starts a training run or an evaluation by
+surprise:
+
+```
+docker compose run --rm train    # fit the classifier into the shared volume (needed once)
+docker compose run --rm gate     # a full unattended run; the report lands in ./evaluation/results
+```
+
+Your `.env` is read at run time and excluded from the build context, so no key is ever baked into
+an image. `storage/` is a named volume shared by the services that need it, which is why the log
+the API writes is the log the viewer shows — and why `touch`ing the kill switch works from the
+host:
+
+```
+docker compose exec api touch /app/storage/KILL_SWITCH   # every ticket now escalates (FR-16)
+docker compose exec api rm    /app/storage/KILL_SWITCH   # and back
+```
+
+`tests/test_ops_stack.py` checks the stack against the application: that Prometheus scrapes a path
+the API serves, that the viewer is read-only and points at the real log, that every mounted file
+exists, and that no service carries a key. A stack that has drifted fails quietly — empty panels, a
+target permanently down — so it is worth the seven tests.
+
 ## Repository map
 
 `src/ticketing_agent/` components · `evaluation/` harness and results · `prompts/` versioned prompt library · `docs/` requirements, specs, decisions · `tests/` tests and synthetic fixtures · `data/` pack datasets.

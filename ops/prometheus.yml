@@ -1,0 +1,13 @@
+# Scrapes the API's view of the decision log (NFR-05). The endpoint reads the log rather than
+# in-process counters, so restarting the API does not reset any of these series.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: ticketing-agent
+    metrics_path: /metrics/prometheus
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          service: cloudserve-support

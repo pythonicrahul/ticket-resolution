@@ -1350,3 +1350,38 @@ renamed input file gives identical decisions with zero model calls.
 
 Row 18 → `DONE`. The backlog is closed.
 
+## 2026-09-29 · A compose stack, and the windows into a running system
+
+Not a backlog row — the backlog is closed — but the dashboard built at row 17 had nothing serving it, and
+the decision log was only readable with `sqlite3` on the command line.
+
+`docker compose up --build` now brings up four things: the API (8000), the decision log in a browser
+(8080), Prometheus (9090) and Grafana with the repository's dashboard already provisioned (3000). Two
+one-off jobs — `train` and `gate` — sit behind a `tools` profile so `up` never starts a training run or a
+full evaluation by surprise.
+
+Four decisions worth stating:
+
+- **The viewer is read-only** (`sqlite_web -r`). This is the audit record NFR-05 is about; a viewer that can
+  edit it is not an audit record.
+- **The key is read at run time, never built in.** `env_file: [.env]`, and `.dockerignore` excludes `.env`
+  from the build context. A test asserts no service carries `LLM_API_KEY` in its environment.
+- **The kill switch lives in the shared volume**, so `docker compose exec api touch
+  /app/storage/KILL_SWITCH` works from the host. A switch an operator cannot reach without entering the
+  container is not an emergency control (FR-16).
+- **`tests/test_ops_stack.py` (8 tests) checks the stack against the application**: that Prometheus scrapes
+  a path the API actually serves, that the viewer points at the same volume the API writes to, that every
+  mounted host file exists, and that the image copies everything the package metadata needs. A drifted
+  stack fails quietly — empty panels, a target permanently down — and nobody notices until a demonstration.
+
+**Honest limits.** `docker compose config` validates the file and the tests check it against the code, but
+**the image has never been built and the stack has never been started**: the Docker daemon is not running
+in this environment. Two build-breaking problems were found and fixed by inspection rather than by running
+it — `pyproject` declares `readme = "README.md"` and the Dockerfile did not copy it, which would have
+failed minutes into the build at the *second* `uv sync`; and the profile guard stops `up` from launching a
+training job. Anything else will surface on the first real `docker compose up`, and given this session's
+record — every component that ran for real revealed something the tests did not — that first run should be
+treated as a test, not a formality.
+
+`uv run pytest -q` → **504 passed**. `uv run ruff check .` → clean.
+

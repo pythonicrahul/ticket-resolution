@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: cloudserve
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      # The dashboard the repository owns. A panel querying a metric nobody exports fails a test
+      # (tests/test_fr04_api.py), so what is provisioned here cannot drift from the exporter.
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

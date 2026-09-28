@@ -1,0 +1,15 @@
+# Never build a key into an image.
+.env
+.env.*
+!.env.example
+
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+storage/
+evaluation/results/
+docs/
+tests/
