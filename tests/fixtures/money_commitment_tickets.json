@@ -321,7 +321,7 @@
     },
     "synthetic": {
       "category": "money_commitment",
-      "why": "Exercises the 'compensation' and 'goodwill' triggers, which FR-03 \u00a77 flags as the most likely to over-fire. Without a fixture the open question cannot be answered from evidence.",
+      "why": "Exercises the 'compensation' and 'goodwill' triggers, which FR-03 §7 flags as the most likely to over-fire. Without a fixture the open question cannot be answered from evidence.",
       "expected_reason": "money_commitment_requested",
       "expected_all_reasons": [
         "money_commitment_requested"
@@ -419,7 +419,7 @@
     },
     "synthetic": {
       "category": "date_commitment",
-      "why": "Exercises the bare 'eta' trigger, which FR-03 \u00a77 flags: a plain ETA question, which under the current rule escalates.",
+      "why": "Exercises the bare 'eta' trigger, which FR-03 §7 flags: a plain ETA question, which under the current rule escalates.",
       "expected_reason": "date_commitment_requested",
       "expected_all_reasons": [
         "date_commitment_requested"
@@ -467,7 +467,7 @@
     },
     "synthetic": {
       "category": "known_over_escalation",
-      "why": "Honestly labelled: under FR-03 \u00a73.2 as written, this escalates, and arguably it should not \u2014 nobody is asking for a contractual commitment. It is the accepted cost of the conservative rule, recorded so the author can weigh it (FR-03 \u00a77) rather than discovering it in a run. Fixing the rule should flip this fixture to auto_respond, not delete it.",
+      "why": "Honestly labelled: under FR-03 §3.2 as written, this escalates, and arguably it should not — nobody is asking for a contractual commitment. It is the accepted cost of the conservative rule, recorded so the author can weigh it (FR-03 §7) rather than discovering it in a run. Fixing the rule should flip this fixture to auto_respond, not delete it.",
       "expected_reason": "date_commitment_requested",
       "expected_all_reasons": [
         "date_commitment_requested"
@@ -790,7 +790,7 @@
     },
     "synthetic": {
       "category": "explanatory_billing",
-      "why": "The second answerable example FR-03 \u00a73.2 names: a factual question containing a period, which the date rule must leave alone.",
+      "why": "The second answerable example FR-03 §3.2 names: a factual question containing a period, which the date rule must leave alone.",
       "expected_reason": null,
       "expected_all_reasons": [],
       "expected_guardrail": null,
@@ -801,6 +801,103 @@
       "contact_details": [],
       "markers": [],
       "money_triggers": [],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-013",
+    "channel": "email",
+    "subject": "Two duplicate subscriptions on one invoice",
+    "body": "Both of our teams were billed for the same subscription in April. Please issue refunds for both accounts and confirm the credits on the next invoice.",
+    "received_at": "2026-05-12T10:15:00Z",
+    "customer_id": "CUST-9013",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "enterprise",
+    "customer_region": "north_america",
+    "language_fluency": "fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "The plural form. Row 9's review found that the singular-only trigger list read this as an answerable billing question: 'refunds' matched nothing, so a real refund request would have been auto-answered (D-42). Note 'credits' here is deliberately not a trigger on its own — only 'credit note', 'account credit', 'service credit' and 'credit back' are, and this ticket escalates on 'refunds'.",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "refund"
+      ],
+      "date_triggers": []
+    }
+  },
+  {
+    "ticket_id": "SYN-MONEY-014",
+    "channel": "chat",
+    "subject": "",
+    "body": "the late fee is wrong. we need a write-off of the balance and a charge-back if you cannot fix it",
+    "received_at": "2026-05-12T11:40:00Z",
+    "customer_id": "CUST-9014",
+    "customer_name": "Synthetic Tester",
+    "customer_tier": "standard",
+    "customer_region": "asia_pacific",
+    "language_fluency": "non_fluent",
+    "labels": {
+      "intent": "billing_query",
+      "urgency": "medium",
+      "expected_route": "escalate",
+      "answerable_from_docs": true,
+      "expected_doc_ids": [
+        "DOC-BILL-001"
+      ],
+      "must_not_auto_respond": true
+    },
+    "history": {
+      "first_contact_resolution": null,
+      "resolution_time_minutes": null,
+      "csat_rating": null,
+      "escalated": true,
+      "repeat_contact": false
+    },
+    "synthetic": {
+      "category": "money_commitment",
+      "why": "The hyphenated form, which the literal phrase list also missed: the spec writes 'write off' and 'charge back' with spaces, and customers write them with hyphens (D-42).",
+      "expected_reason": "money_commitment_requested",
+      "expected_all_reasons": [
+        "money_commitment_requested"
+      ],
+      "expected_guardrail": null,
+      "requirement_ids": [
+        "FR-03"
+      ],
+      "secrets": [],
+      "contact_details": [],
+      "markers": [],
+      "money_triggers": [
+        "charge back",
+        "write off"
+      ],
       "date_triggers": []
     }
   }

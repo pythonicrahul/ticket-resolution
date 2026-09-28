@@ -479,3 +479,59 @@ should be read that way: it orders correctly, it just cannot often tell low from
 This is reported rather than fixed. Options if the author wants better: rules for urgency instead of a
 classifier, merging low and medium into one level, or relabelling. All three are decisions about the product,
 not the code.
+
+## D-42 · Row 9's review: three fixes that each had a way of looking fine (FR-16, FR-03, FR-02)
+Written after the independent review of row 9. All three were code that read correctly and behaved wrongly.
+
+**The kill switch failed *open*.** `Settings.kill_switch_on` and `Router._switch_is_on` both used
+`Path.exists()`, which is `os.path.exists` and swallows every `OSError` to return `False`. A switch file
+inside a directory the process cannot stat therefore read as **off**: an operator would `touch
+storage/KILL_SWITCH`, believe automation was stopped, and the run would keep answering with
+`kill_switch=false` on every row — and the governance declaration written from FR-16 §2 would be false.
+There is now **one** implementation, `Settings.kill_switch_on`, using `stat`: absent is off, unreadable is
+on. The test that was supposed to cover this put a *directory* at the switch path, which `exists()` reports
+as present, so it passed while the fail-safe branch was dead code; T-FR16-6b now makes the stat call
+genuinely fail (skipped as root) and T-FR16-6c fails if routing ever re-implements the check.
+
+**FR-03's money rule missed plurals and hyphens.** The trigger tables are singular and space-separated, and
+matching was literal, so "please issue refunds for both accounts", "we are claiming the service credits",
+"these disputes", "we will raise chargebacks", "a write-off of the balance" all routed to `auto_respond` —
+the PRD's must-escalate list, answered automatically. `route.matches_triggers` now also accepts a plural
+(`(?:e?s)?`) and a hyphen where the phrase has a space, and it is the **single** implementation: the fixture
+module used to carry its own copy, which is how the fixtures agreed with the rule that a plural was
+answerable. Re-measured after the widening: **still 0 of the 580 supplied tickets** match any trigger, so
+D-21's conclusion survives. `SYN-MONEY-013` (plural) and `SYN-MONEY-014` (hyphen) are the regression cases.
+
+**`unknown_intent` was a rank in no precedence table.** Row 9 introduced it at rank 6, which silently moved
+FR-03's ranks and would have broken row 12's fixtures, whose `expected_reason` is derived from the tables
+(T-FR12-21) — exactly the drift D-16 was written to prevent. It now sits **below** the money and date rules,
+where every rank already written down keeps its place, and it is in D-16's table (FR-12 §3.4), FR-02 §3 and
+FR-09 §4. A reason with no rank is refused rather than ranked last, because the alternative is a primary
+reason that depends on evaluation order.
+
+Also from the same review: `RoutingDecision.log_fields()` now carries `prediction_confidence` (a row that
+records the floor but not the number compared with it cannot answer "was this right?") and merges the
+classification's half itself, because both halves fill `detail` and splatting them raises `TypeError`;
+`CONFIDENCE_THRESHOLD=0.0` from the environment logs a warning (it answers 415 development tickets, 10 of
+them must-escalate); the sweep refuses any `--input` that is not `TRAINING_TICKETS_PATH`, with no override;
+and a missing classification logs `unknown_intent` rather than the spec's earlier claim of `unclear_request`,
+because putting a prediction no model made into the log misreports what happened.
+
+## D-43 · The confidence threshold is a fairness and a calibration decision, not only a quality one (FR-02)
+`evaluation/reports/confidence_sweep.md` is written for checkpoint row 10 and says three things that the
+author has to weigh together, because optimising any one of them alone picks a bad T.
+
+1. **T is not the escalation lever it looks like.** At T = 0, 17% of tickets still escalate on rules T cannot
+   move. The report's right-hand column counts only the tickets whose *sole* reason is confidence.
+2. **FR-09's rule is exact but fires on the predicted intent.** On grouped out-of-fold predictions, **10 of
+   500 development tickets labelled `must_not_auto_respond` would be answered** — nine `security_incident`
+   read as `account_access`/`api_key_issue`, one `unclear_request` as `database_issue` — all stating 0.79 to
+   0.85 confidence. T ≥ 0.85 catches every one of them. On in-sample predictions the column reads 0 at every
+   T, which is how the script read before the basis was fixed: the row-8 leak (D-39) in a new place.
+3. **The two T values the wrong-answer columns favour breach NFR-06.** The fluent/non-fluent answer-rate gap
+   is 10.1 points at T = 0.85 and 13.8 at T = 0.90, against NFR-06's 5-point limit, and the confidence being
+   thresholded is **42.6 points out of calibration** in the 0.60–0.80 band (25 predictions stating 78.6%,
+   right 36.0% of the time) — the band the must-escalate leaks sit in.
+
+The report chooses nothing and the placeholder stays at 0.80. Whether to accept a 2% must-escalate leak, a
+64% answer rate, or an NFR-06 breach is the author's call at row 10, and the PRD revision should record it.

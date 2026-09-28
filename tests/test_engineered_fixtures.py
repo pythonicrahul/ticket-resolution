@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from ticketing_agent.ingest import load_tickets, normalise_ticket
+from ticketing_agent.route import matches_triggers
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -155,8 +156,16 @@ def pii_patterns(text: str) -> list[str]:
 
 
 def phrases(text: str, table) -> list[str]:
-    low = text.lower()
-    return [t for t in table if re.search(rf"(?<!\w){re.escape(t)}(?!\w)", low)]
+    """The shipped matcher, not a copy of it.
+
+    This used to be its own regex, and the duplicate hid a defect: both this helper and the rule
+    matched the singular phrase only, so "please issue refunds" derived *no* expected reason and
+    the fixtures agreed with the rule that it was answerable (D-42). Deriving the fixtures'
+    expectations from the code the fixtures test is a smaller risk than deriving them from a
+    second implementation that can drift; the phrase tables are still checked against the spec
+    text in both directions by T-FR12-5.
+    """
+    return matches_triggers(text, table)
 
 
 def markers(text: str) -> list[str]:

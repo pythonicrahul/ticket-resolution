@@ -651,3 +651,90 @@ the ticket itself, and there are now tests for load failures and for the confide
 1. Three intents miss NFR-03's 85% per-class precision. Accept, merge the rare classes, or add rules?
 2. NFR-03's calibration target holds for 475 of 500 predictions and fails in one 25-prediction band. Acceptable?
 3. FR-05's three urgency levels are in practice two. Accept, merge low and medium, or relabel?
+
+## 2026-09-28 · Row 9 · B-07 Routing · FR-09, FR-03, FR-16, FR-02
+
+**Files changed**
+- `docs/specs/FR-02.md` (new): `RoutingDecision`, the full D-16 precedence table as the whole of the
+  component, `confidence < T`, 10 acceptance tests. `docs/specs/FR-09.md` (new): the four intents as a code
+  constant, 8 tests. `docs/specs/FR-16.md` (new): the kill switch, with the Governance §5 five questions
+  answered, 7 tests.
+- `src/ticketing_agent/route.py`: `Router.decide`, `RoutingDecision`, `ALWAYS_ESCALATE_INTENTS`,
+  `KNOWN_INTENTS`, `MONEY_TRIGGERS`/`DATE_TRIGGERS`, `PRECEDENCE`, `matches_triggers`, one written
+  explanation per reason.
+- `src/ticketing_agent/config.py`: `Settings.kill_switch_on` is now the single, fail-safe switch check;
+  `CONFIDENCE_THRESHOLD=0.0` from the environment warns.
+- `scripts/confidence_sweep.py` (new) → `evaluation/reports/confidence_sweep.md`, for checkpoint row 10.
+- `tests/test_fr02_routing.py` (new): 61 tests. `tests/fixtures/money_commitment_tickets.json`: `SYN-MONEY-013`
+  and `-014`. `tests/test_engineered_fixtures.py`: `phrases()` now calls the shipped matcher.
+- `docs/specs/FR-03.md`, `FR-12.md` (§3.4 = D-16), `FR-09.md` updated; `docs/decisions.md` D-42, D-43.
+
+**Result**: `uv run pytest -q` → **311 passed** (298 at first green, 250 before this row).
+`uv run ruff check .` → clean. Routing makes no model call, reads no clock and touches no network, so the
+whole suite stays offline.
+
+**What the sweep found** (grouped out-of-fold predictions, development set only)
+
+| T | answered | against the label | wrong intent | must-escalate answered | fluency gap |
+|---|---|---|---|---|---|
+| 0.75 | 83.0% | 112 | 42 | **10** | 1.6 |
+| 0.80 (placeholder) | 78.6% | 105 | 26 | **9** | 2.5 |
+| 0.85 | 64.4% | 84 | 10 | 0 | **10.1** |
+| 0.90 | 43.0% | 62 | 2 | 0 | **13.8** |
+
+FR-09's rule is exact, but it fires on the *predicted* intent, so on wording the model has not seen **10 of
+500 tickets labelled `must_not_auto_respond` would be answered** — nine `security_incident` read as
+`account_access`/`api_key_issue`, one `unclear_request` as `database_issue`, all stating 0.79–0.85. T ≥ 0.85
+catches every one, at 64% answered and an NFR-06 breach on fluency (limit 5 points). The report names the ten
+tickets individually and states that the confidence it thresholds is 42.6 points out of calibration in the
+0.60–0.80 band — which is where those ten sit. D-43. **The script first read 0 wrong intents at every T**
+because the saved model was fitted on these same tickets; it now uses the grouped out-of-fold predictions and
+keeps the in-sample table beside them, so the leak is visible rather than flattering (D-39 again, D-42).
+
+**Independent review** (reviewer subagent, fresh session, PR-08 v1.0): 13 findings — 3 high, 5 medium, 5 low.
+
+All three high ones are fixed, and each had a way of looking fine (D-42):
+1. **The kill switch failed open.** `Path.exists()` is `os.path.exists`, which swallows every `OSError`, so a
+   switch file inside an unreadable directory read as *off* — an operator would `touch storage/KILL_SWITCH`,
+   believe automation was stopped, and the run would keep answering. One implementation now, using `stat`.
+2. **T-FR16-6 could not catch that**: it put a *directory* at the switch path, which `exists()` reports as
+   present, so the fail-safe branch was dead code and mutating it left the suite green. T-FR16-6b now makes
+   the stat call genuinely fail; T-FR16-6c fails if routing ever re-implements the check.
+3. **FR-03's money rule missed plurals and hyphens.** "Please issue refunds", "the service credits", "these
+   disputes", "we will raise chargebacks", "a write-off of the balance" all routed to `auto_respond`. The
+   matcher now accepts a plural and a hyphen, the fixture module calls it instead of carrying a second copy
+   (which is how the fixtures agreed a plural was answerable), and D-21's "0 of 580 tickets match" was
+   re-measured after the widening and still holds.
+
+Mediums fixed: `unknown_intent` moved below the money and date rules and written into D-16/FR-02 §3/FR-12
+§3.4, with T-FR02-6b parsing both spec tables and failing on drift; `log_fields()` now carries
+`prediction_confidence` and merges the classification's half itself (splatting both raised `TypeError` on
+`detail`); the four untested ranks and the unranked-name `ValueError` now have tests, and T-FR02-5 asserts the
+case table covers every rank; two test ids that belonged to other acceptance criteria renamed
+(`T_FR03_7` is row 13's handover criterion, `T_FR03_13` is row 2's); the sweep names NFR-06's 5-point limit,
+flags the rows that breach it, and states the calibration gap it is reading a threshold off.
+
+Lows fixed: `CONFIDENCE_THRESHOLD=0.0` warns at load; the sweep refuses any `--input` that is not
+`TRAINING_TICKETS_PATH`, with no override; T-FR09-1 asserts the reason at 0.01 as well as 0.99; a missing
+classification is tested.
+
+**Not fixed, on purpose**
+- `KILL_SWITCH_FILE` is resolved against the process working directory like every other path in `Settings`
+  (which is what makes the cache deterministic), so a relative `./storage/KILL_SWITCH` only works when the
+  process runs from the repo root. The deployment should set an absolute path; noted for the governance
+  declaration rather than changed here.
+- FR-09 §4 said a missing classification is "treated as `unclear_request`". The code logs `unknown_intent`
+  instead and the spec was corrected, because writing a prediction no model made into the log misreports
+  what happened. Same escalation either way.
+- `scripts/confidence_sweep.py` hardcodes its threshold ladder, its scratch Chroma path and a placeholder
+  model id (`"not-used-by-routing"`; routing makes no call). Dev script, both paths overridable.
+- T-FR16-7 (a harness run with the switch on) waits for row 14, when routing is wired into the pipeline;
+  today it would pass for the wrong reason, because the harness still runs `StubPipeline`. Recorded in the
+  spec rather than quietly skipped.
+
+**Open questions for the human** (row 10 decides T)
+1. A 2% must-escalate leak on unseen wording (T = 0.80) against a 64% answer rate and a 10.1-point fluency
+   gap (T = 0.85). Which cost is acceptable?
+2. Per-intent thresholds would separate those two, and are a small change. Wanted before the gate or after?
+3. `feature_request` is 20 of 500 development tickets and escalates by rule (FR-09 §7). Still wanted, or
+   should it get a templated policy answer?

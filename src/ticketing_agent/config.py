@@ -13,9 +13,12 @@ Every default here is also in `.env.example`. Three rules earn their keep:
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -113,8 +116,24 @@ class Settings:
 
     @property
     def kill_switch_on(self) -> bool:
-        """FR-16: the switch is a file, so it can be turned on without a redeploy."""
-        return self.kill_switch_file.exists()
+        """FR-16 §3: the switch is the existence of the file, checked freshly every time.
+
+        `Path.exists()` is not usable here. It is `os.path.exists`, which swallows every OSError
+        and returns False, so a switch file inside a directory the process cannot read would have
+        read as *off* — an operator would `touch storage/KILL_SWITCH`, believe automation was
+        stopped, and the run would keep answering. `stat` distinguishes the two cases: absent is
+        off, unreadable is **on** (§4). If we cannot tell whether automation was switched off, the
+        safe reading is that it was.
+        """
+        path = self.kill_switch_file
+        try:
+            path.stat()
+        except FileNotFoundError:
+            return False
+        except (OSError, ValueError) as exc:
+            _log.warning("cannot read the kill switch at %s (%s): treating it as ON", path, exc)
+            return True
+        return True
 
 
 def load_settings(env_file: str | Path | None = ".env") -> Settings:
@@ -125,7 +144,7 @@ def load_settings(env_file: str | Path | None = ".env") -> Settings:
     """
     if env_file is not None:
         _load_env_file(Path(env_file))
-    return Settings(
+    settings = Settings(
         llm_api_key=os.environ.get("LLM_API_KEY", ""),
         llm_base_url=os.environ.get("LLM_BASE_URL", Settings.llm_base_url),
         model_name=os.environ.get("MODEL_NAME", ""),
@@ -149,6 +168,17 @@ def load_settings(env_file: str | Path | None = ".env") -> Settings:
         kill_switch_file=Path(os.environ.get("KILL_SWITCH_FILE", Settings.kill_switch_file)),
         log_level=os.environ.get("LOG_LEVEL", Settings.log_level),
     )
+    if settings.confidence_threshold == 0.0:
+        # Not an error: `Settings(confidence_threshold=0.0)` is how the sweep measures the floor's
+        # own cost. But reaching it from the environment means FR-02's floor is off, and the log
+        # would still read `threshold_applied=0.0` as though a threshold had been applied. On the
+        # development set that setting answers 415 tickets, 112 of them against their label and 10
+        # of them labelled must-escalate (evaluation/reports/confidence_sweep.md).
+        _log.warning(
+            "CONFIDENCE_THRESHOLD is 0.0, so FR-02's confidence floor never fires: every ticket "
+            "that clears the other rules will be answered whatever the model's confidence. Set a "
+            "threshold from evaluation/reports/confidence_sweep.md.")
+    return settings
 
 
 def _load_env_file(path: Path) -> None:
