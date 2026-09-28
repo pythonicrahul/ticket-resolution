@@ -577,3 +577,15 @@ the threshold in use in both reports so the gate run shows what was chosen.
 **Open question this raises for row 7's sign-off**: section chunking cannot answer a question whose answer
 spans two sections, and a parent-document strategy would. The sweep suggests it is not urgent — top-1 is
 89.9% — so I have not built it.
+
+## 2026-09-28 · Row 7 signed off by the author · FR-10
+
+`RELEVANCE_THRESHOLD=0.25`, chosen from the sweep and recorded as D-38 with the evidence and the
+alternatives. Set in `.env.example` and in the local `.env`; no code changed, which was the point of
+FR-10 §3.3. The harness prints the threshold in use in both reports, so the gate run shows what was chosen.
+
+The author's attention was drawn to the finding that the threshold cannot deliver the escalation target and
+must not be raised to chase it (D-38), and to what 0.25 accepts: 135 of 143 unanswerable development tickets
+still retrieve something, which rows 9 and 12 have to catch.
+
+Row 7 → DONE. Next: row 8, the intent and urgency classifier with its calibration table.

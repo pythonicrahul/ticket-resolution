@@ -388,3 +388,30 @@ empty denominator, route agreement says in the report that it does not measure r
 escalates, the FCR and escalation figures declare that 100% escalation is by construction until row 14, and
 retrieval hit rate states that it has no false-positive counterpart. The report is the artefact an assessor
 reads; a number that overstates what was measured is worse than a gap that names itself.
+
+## D-38 · The relevance threshold is 0.25 (FR-10, checkpoint row 7)
+Decided by the author, 2026-09-28, from `evaluation/reports/retrieval_sweep.md` over the 500 development
+tickets. `RELEVANCE_THRESHOLD=0.25`.
+
+Why this value and not a higher one, in the order the evidence came in:
+
+1. **It costs nothing.** Hit rate on answerable tickets stays at 95.2% and answerable tickets lost stays at
+   4.8% — identical to having no threshold at all. Top-1 accuracy is unchanged at 89.9%.
+2. **Every decision it makes is right.** Of the tickets it leaves empty, 100% are genuinely unanswerable: 8
+   tickets that would otherwise have been answered from passages that were not relevant. At 0.30 that
+   precision falls to 85%, and it keeps falling — 66% at 0.45, 37% at 0.60.
+3. **It is the last value that satisfies NFR-06.** The fluent/non-fluent hit-rate gap is 4.3 points at 0.25
+   and 7.8 at 0.30, over the 5-point limit. Raising the threshold makes the system worse for non-fluent
+   English faster than it makes it safer, which is what the Governance Framework's fairness audit predicts of
+   retrieval.
+
+**What this threshold is not for.** It cannot deliver the ≤30% escalation target and must never be raised to
+chase it. 29% of the development tickets are unanswerable, but even at 0.60 — where a third of answerable
+tickets have lost their article — only 36% of tickets return nothing and only 37% of *those* are genuinely
+unanswerable. Retrieval's "nothing is relevant" signal does not separate the two populations. The escalation
+rate is FR-02's confidence threshold and FR-12's grounding check doing their jobs.
+
+**What the choice accepts.** 135 of the 143 unanswerable development tickets still retrieve something, so the
+later stages must catch them: grounding has to fail on a draft built from irrelevant passages, and the
+confidence threshold has to escalate a weak classification. If those do not hold at rows 9 and 12, the fix is
+to strengthen them, not to raise this number.
