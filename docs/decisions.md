@@ -359,3 +359,32 @@ the Governance Framework's fairness audit names both. The finding that matters: 
 threshold is a fairness decision as well as a quality one, and NFR-06's 5-point limit is breached by
 retrieval alone at 0.30 and above. With the smallest bucket at n=87, a few points is inside sampling noise;
 the report says so rather than quoting decimals as though they were precise.
+
+## D-36 · The per-ticket guard covers the whole of one ticket, and an invalid call is not a broken log (FR-14, FR-13)
+Row 6's review found the harness's isolation guard wrapped only `pipeline.process()`. Building the log row
+and writing it sat outside it, so a pipeline that returned a `dict`, or an `Outcome` that FR-13 rejects — an
+escalation with no reason, an unknown stage, an `auto_respond` with no `threshold_applied` — killed the entire
+run. Worse, `InvalidDecision` is a `DecisionLogError`, so it surfaced through D-27's "the log cannot be
+written" path: a component's bug about one ticket was reported to the operator as an unwritable log, with 76
+of 80 tickets never attempted. That is the exact failure mode Build Specification §08 lists and A9 tests.
+
+The guard now covers the whole of one ticket's handling, and the two failures are separated: **`InvalidDecision`
+is one ticket's problem** (escalate it with a row that is valid by construction, carry on), while
+**`DecisionLogUnavailable` is the run's** (stop, because unlogged processing breaks FR-13 for every ticket).
+A pipeline that returns the wrong type is treated the same way as one that raises. T-FR14-19 covers six
+variants; none of them existed before, which is why the gap survived.
+
+## D-37 · A fairness figure that can only say "pass" is not a measurement (FR-14, NFR-06)
+`variation_points` was computed over only the segments *not* flagged low-confidence, and emitted `0.0` when
+fewer than two survived — so the markdown printed "Variation across segments: **0.0 points** (NFR-06 allows
+under 5)" for a run where nothing had been measured at all, and silently excluded the 8 enterprise tickets
+that are the segment NFR-06 names. It now includes every segment that has tickets, reports `null` with "not
+measurable" when there are fewer than two, names the small segments beside the figure, and says whether the
+variation is within or **above** the limit. Segments also carry retrieval hit rate, not only the answered
+rate, because NFR-06 is about resolution rate *and quality*.
+
+The same principle runs through the report after this row: `_pct` returns `None` rather than `0.0` for an
+empty denominator, route agreement says in the report that it does not measure routing while everything
+escalates, the FCR and escalation figures declare that 100% escalation is by construction until row 14, and
+retrieval hit rate states that it has no false-positive counterpart. The report is the artefact an assessor
+reads; a number that overstates what was measured is worse than a gap that names itself.
