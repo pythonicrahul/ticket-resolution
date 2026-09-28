@@ -1018,3 +1018,51 @@ uncertainty sentence containing the reason code, which is what D-52's first rule
 2. The template note is terse by design — it records what was known rather than reading well. If you want it
    to read like prose, that is a second prompt, not a longer template.
 
+## 2026-09-28 · Row 14 · Pipeline wiring: the LangGraph graph · FR-01…FR-16
+
+**Files changed**
+- `src/ticketing_agent/pipeline.py`: `SupportPipeline` (LangGraph `StateGraph` over a Pydantic
+  `PipelineState`), `_terminal_reason`, `_as_terminal`, `_explanation`, `_requirements`. `StubPipeline` and
+  the `Outcome` contract are unchanged.
+- `evaluation/harness.py`: the graph is the CLI default, `--stub-pipeline` is the only route to the stub,
+  the log is attached to the pipeline, and the spend counters are each ticket's own.
+- `src/ticketing_agent/guardrails.py`: the exact-quote check folds punctuation and accepts a multi-span
+  quote (D-53).
+- `tests/test_pipeline.py` (new, 25 tests), `tests/test_fr12_guardrails.py` (+3), `tests/test_fr14_harness.py`
+  (T-FR14-22 patched for the new default and strengthened). `docs/decisions.md` D-53.
+
+**Result**: `uv run pytest -q` → **469 passed** (460 at first green, 441 before this row).
+`uv run ruff check .` → clean.
+
+**Real runs** (Groq, development tickets, not part of the suite):
+
+| run | processed | answered | escalated | blocked | reconciles |
+|---|---|---|---|---|---|
+| first, 6 tickets | 6 | 1 | 5 | 3 | yes, but 2 `pipeline_error` |
+| after the row-14 fixes, 10 tickets | 10 | **4** | 6 | 3 | yes |
+
+The first run found two bugs the 19 wiring tests missed — an escalation whose only model call was the
+handover being refused by FR-13 for having no `prompt_version`, and `model_calls` counted up to three times
+per request — and then the grounding investigation found the quote-matching defect that was costing most of
+the answer rate (D-53).
+
+**Independent review** (reviewer subagent, fresh session, PR-08 v1.0): 17 findings — 1 severe, 4 high,
+8 medium, 4 low. The severe, all four highs and every medium are fixed; D-53 has the detail. The severe one
+would have failed the gate run at row 15 on the first ticket the documentation cannot answer.
+
+**Not fixed, on purpose**
+- `redactions_in_log` still sums every row, so a redaction appearing on both an intermediate and a terminal
+  row is counted twice. It is a reporting figure, not a decision, and the fix belongs with row 15's reading
+  of the metrics.
+- A terminal row's `prompt_version` names the prompt that produced its artefact while `model_calls` covers
+  all three prompts' calls. One column cannot hold three; the intermediate rows carry the breakdown.
+- `PipelineState(extra="forbid")` does not catch a node returning an unknown key — LangGraph filters updates
+  to declared channels first. The docstring now says so rather than claiming otherwise.
+
+**Open questions for the human**
+1. Three of ten drafts are still blocked as `ungrounded_draft` by PR-03's genuine disagreement (not the
+   quote-matching defect). Whether that is the judge being strict or the drafts being weak is what row 15's
+   gate run has to characterise — it is the difference between a ~40% and a ~70% answer rate.
+2. The graph makes up to three provider calls per answered ticket (draft, judge, and a handover on
+   escalation). At 8000 tokens/minute that sets the pace of a gate run (D-47).
+

@@ -841,3 +841,53 @@ because of an injected reason, so either half could be deleted; the "100%" test 
 `allow_model=False` so it never exercised the withholding rules, and asserted `seen >= 25` while iterating
 45. It now iterates every `*_tickets.json`, asserts per file, and counts the tickets actually withheld.
 
+## D-53 · The graph, and what only a real run could show (FR-14, and FR-01…FR-16 as a system)
+Row 14. `SupportPipeline` is a LangGraph `StateGraph` over a Pydantic state (D-31). The graph earns the
+dependency by putting the order of the steps and the conditions between them in one place, so "what happens
+to a ticket" is read off the edges. **It is not an agent**: no model chooses the next step, because a support
+system that decides its own control flow cannot be shown to escalate when it should (A5, NFR-08).
+
+**The exact-quote check was destroying the answer rate.** The first real harness run answered 1 ticket in 6,
+with 3 drafts blocked as `ungrounded_draft`. The drafts were fine: PR-03 returned `supported: true` for every
+sentence, and the overlap floor passed everything at 0.62–1.00. What failed was our own check — the judge
+answers "copy the exact words" by copying **two spans joined with `; `**, and the joined string is a
+substring of nothing. Sentences with 1.00 content-word overlap were rejected on punctuation, and one
+rejected sentence blocks a whole reply. The check now folds case, whitespace and curly quotes, splits the
+quote on separators, and requires **every substantial part** to appear verbatim — strict as before, a judge
+that invents a quote still fails, but not defeated by a semicolon. On ten development tickets the answer rate
+went from 1-in-6 to 4-in-10.
+
+**The severe finding: a refused draft wrote two terminal rows.** `DraftResult.log_fields()` says `escalate`
+when the draft is unusable, and the pipeline recorded it as the intermediate `generation` row — so the
+harness's own terminal row was the second. Reconciliation then fails and the run exits 1. The trigger is
+`answerable: false`, which FR-11 §3.6 calls the *documented normal* outcome for the ~29% of tickets the
+documentation cannot answer, so the gate run at row 15 would have failed on the first such ticket. The
+intermediate row now records what generation *produced*; the ticket's fate is the terminal row's business.
+
+**Three more that each broke a requirement in the wiring rather than in a component:**
+1. **A guardrail that raised skipped the handover entirely** — the graph went to `END`, and the row carried
+   `summary=NULL, uncertainty=NULL` against FR-01's 100%.
+2. **The handover was handed routing's decision**, so a ticket blocked for leaking an email address was
+   described with the *generic* uncertainty and a summary reading "the assistant is sure enough of the
+   answer to send it". All nine of FR-01's post-draft sentences existed and **none was reachable**.
+3. **`explanation` on an escalate row was routing's answerable sentence** — the field FR-13 §2 exists for a
+   support manager to read, stating the contrary of the decision beside it.
+
+**And an `except` that switched logging off.** `_record` swallowed everything: `DecisionLogUnavailable`,
+which D-27 makes a run-level stop, and `InvalidDecision` on a block row — so FR-12 §5's "the block is
+recorded" could silently not happen while the ticket escalated anyway. The first now propagates, the second
+is logged at error and turns into the ticket's failure, and a pipeline with no log attached says so once
+rather than quietly writing nothing.
+
+**Also fixed:** a failed pre-draft check now withholds the ticket instead of being read as "no findings"
+(FR-12 §3.3), and a withheld ticket is no longer embedded; `process` builds the outcome inside its own
+guard, so "never raises" is true; the harness checks the key and the classifier *before* building the index,
+and reports a missing key as a `HarnessError` rather than a traceback; `model_calls` counts each ticket's own
+total rather than summing rows that each carry a running total; and `prediction_value` stopped being written
+as `decision.reason and None or (...)`, an expression that always evaluates to its right-hand side — correct
+by accident, and a trap for whoever "fixed" it.
+
+**Two tests that could not fail** are replaced: the `DecisionLog.perform` ordering test bracketed
+`super().perform` and so asserted the wrapper's own structure, and a `assert index < len(...)` tautology. The
+new one asks the log, from inside the action, whether the row is already committed.
+

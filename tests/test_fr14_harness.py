@@ -449,7 +449,11 @@ def test_T_FR14_22_the_cli_is_the_documented_command(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCS_PATH", str(DOCS))
     monkeypatch.setenv("DECISION_LOG_PATH", str(tmp_path / "cli.db"))
     monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "cli-chroma"))
+    # Row 14 changed what the CLI builds by default: the real graph, not the stub. Both names
+    # are patched so this test is about the command, not about which pipeline is wired in.
     monkeypatch.setattr(harness_module, "_build_stub_pipeline",
+                        lambda *_args, **_kwargs: FakePipeline())
+    monkeypatch.setattr(harness_module, "_build_pipeline",
                         lambda *_args, **_kwargs: FakePipeline())
 
     code = harness_module.main(["--input", str(VALIDATION), "--output", str(tmp_path / "cli-out"),
@@ -460,6 +464,13 @@ def test_T_FR14_22_the_cli_is_the_documented_command(tmp_path, monkeypatch):
     assert metrics["volume"]["tickets_processed"] == 5
     assert metrics["run"]["run_id"] == "cli-run"
     assert metrics["run"]["tickets_in_file"] == 80, "the file has 80, the run took 5"
+
+    # And the default really is the graph: --stub-pipeline is the only way to the stub, so a
+    # gate run cannot quietly measure a pipeline that answers nothing (row 14).
+    import inspect
+    source = inspect.getsource(harness_module.run)
+    assert "_build_pipeline(settings" in source
+    assert "use_stub" in source
 
     # A bad input path exits 1 with a message, not a traceback.
     assert harness_module.main(["--input", str(tmp_path / "nope.json"),

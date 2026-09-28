@@ -404,16 +404,15 @@ class GroundingJudge:
             messages, prompt_id=PROMPT_ID, prompt_version=PROMPT_VERSION,
             schema=GroundingCheck, max_tokens=self._max_tokens)
 
-        corpus = " ".join(p.text for p in retrieved).lower()
+        corpus = _comparable(" ".join(p.text for p in retrieved))
         asked = set(numbers)
         unsupported: list[int] = []
         for verdict in structured.value.results:
             if verdict.i not in asked:
                 continue  # a verdict for a sentence we did not ask about proves nothing
-            quote = verdict.quote.strip().lower()
             # PR-03 rule 3: a supported sentence carries the words that support it. A quote the
             # passages do not contain is not support, whatever the judge said.
-            if not verdict.supported or (quote and quote not in corpus):
+            if not verdict.supported or not _quote_found(verdict.quote, corpus):
                 unsupported.append(verdict.i)
         answered = {v.i for v in structured.value.results}
         unsupported.extend(i for i in numbers if i not in answered)
@@ -427,6 +426,38 @@ class GroundingJudge:
             model_calls=response.provider_requests,
             cache_hits=1 if response.cached else 0,
         )
+
+
+#: A quote shorter than this cannot be checked meaningfully, so it is not required to match.
+MIN_QUOTE_CHARS = 12
+
+
+def _comparable(text: str) -> str:
+    """Case, whitespace and quote characters folded, so only the words have to match."""
+    folded = (text or "").lower().replace("’", "'").replace("‘", "'")
+    folded = folded.replace("“", '"').replace("”", '"').replace("—", "-")
+    return " ".join(folded.split())
+
+
+def _quote_found(quote: str, corpus: str) -> bool:
+    """Is every substantial part of this quote really in the passages?
+
+    Measured against the real judge (D-53): PR-03 answers "copy the exact words" by copying
+    **two** spans joined with `; `, and the joined string is a substring of nothing. Three of the
+    four drafts in the first real harness run were blocked by that alone — sentences with 0.74
+    and 1.00 content-word overlap with the passages, rejected on punctuation.
+
+    Each part is still required to appear verbatim, so this is not a loosening of the check: a
+    judge that invents a quote fails exactly as it did before.
+    """
+    folded = _comparable(quote)
+    if not folded:
+        return True  # an empty quote is the schema's problem, not this function's
+    parts = [p.strip() for p in re.split(r"\s*;\s*|\s*\.\.\.\s*|\n+", folded) if p.strip()]
+    checkable = [p for p in parts if len(p) >= MIN_QUOTE_CHARS]
+    if not checkable:
+        return folded in corpus
+    return all(part in corpus for part in checkable)
 
 
 # --- post-draft, on every draft -------------------------------------------------------

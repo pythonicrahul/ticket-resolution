@@ -608,3 +608,32 @@ def test_T_FR12_21_the_corpus_reasons_are_what_the_rules_actually_produce(tmp_pa
             if expected is not None:
                 assert decision.reason == expected, entry["ticket_id"]
                 assert decision.decision == "escalate"
+
+
+def test_T_FR12_11f_a_judge_quote_joining_two_spans_is_still_support(tmp_path):
+    """D-53, from the first real harness run: PR-03 answers "copy the exact words" by copying two
+    spans joined with `; `, and the joined string is a substring of nothing. Three of four drafts
+    were blocked by that alone — sentences with 0.74 and 1.00 overlap, rejected on punctuation.
+    """
+    joined = ("Open Billing then Usage breakdown to see the charge for each service; "
+              "The breakdown is generated nightly")
+    report = check(tmp_path, GROUNDED, script=[payload(verdicts(True, quote=joined))])
+    assert report.passed is True, report.reason
+
+
+def test_T_FR12_11g_a_quote_whose_second_half_is_invented_is_not_support(tmp_path):
+    """The check is not loosened: every substantial part still has to be in the passages."""
+    half = ("Open Billing then Usage breakdown to see the charge for each service; "
+            "refunds are issued automatically within one hour")
+    report = check(tmp_path, GROUNDED, script=[payload(verdicts(True, quote=half))])
+    assert report.passed is False
+    assert report.reason == "ungrounded_draft"
+
+
+def test_T_FR12_11h_punctuation_and_case_do_not_decide_grounding(tmp_path):
+    """A curly apostrophe or a doubled space is not evidence of invention."""
+    from ticketing_agent.guardrails import _comparable, _quote_found
+
+    corpus = _comparable("Verify the key's status and expiry on the API keys page.")
+    assert _quote_found("Verify the key’s  status and expiry", corpus)
+    assert not _quote_found("Verify the key was refunded", corpus)

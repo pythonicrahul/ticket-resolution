@@ -84,6 +84,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="process only the first N tickets (a smoke run; recorded in the report)")
     parser.add_argument("--no-index-rebuild", action="store_true",
                         help="fail rather than build the documentation index")
+    parser.add_argument("--stub-pipeline", action="store_true",
+                        help="run ingest and retrieval only, with no model calls. For exercising "
+                             "the run machinery; a gate run must not use it.")
     args = parser.parse_args(argv)
 
     try:
@@ -102,6 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=args.run_id,
             limit=args.limit,
             allow_index_build=not args.no_index_rebuild,
+            use_stub=args.stub_pipeline,
         ).exit_code
     except HarnessError as exc:
         print(f"run failed: {exc}", file=sys.stderr)
@@ -122,7 +126,8 @@ class RunReport:
 def run(input_path: Path, output_dir: Path, settings: Settings, *,
         pipeline: Pipeline | None = None, docs_path: Path | None = None,
         decision_log_path: Path | None = None, run_id: str | None = None,
-        limit: int | None = None, allow_index_build: bool = True) -> RunReport:
+        limit: int | None = None, allow_index_build: bool = True,
+        use_stub: bool = False) -> RunReport:
     """FR-14: one unattended run. Returns the report; writes it to `output_dir`."""
     started = time.monotonic()
 
@@ -146,13 +151,20 @@ def run(input_path: Path, output_dir: Path, settings: Settings, *,
     except OSError as exc:
         raise HarnessError(f"cannot write the report to {output_dir}: {exc}") from None
 
-    if pipeline is None:
-        pipeline = _build_stub_pipeline(settings, docs_path, allow_index_build)
+    built_here = pipeline is None
+    if built_here:
+        pipeline = (_build_stub_pipeline(settings, docs_path, allow_index_build) if use_stub
+                    else _build_pipeline(settings, docs_path, allow_index_build))
 
     log_path = decision_log_path or settings.decision_log_path
     results: list[TicketResult] = []
     try:
         with DecisionLog(log_path, run_id=run_id) as log:
+            # The rows *inside* one ticket — a draft written, a reply blocked — belong to the
+            # component that took the decision (FR-13 §3.1). The terminal row stays here.
+            attach = getattr(pipeline, "attach_log", None)
+            if callable(attach):
+                attach(log)
             log.start_run(input_path, len(tickets))
             for ticket in tickets:
                 results.append(_process_one(ticket, pipeline, log))
@@ -273,9 +285,50 @@ def _is_provider_failure(exc: BaseException) -> bool:
     return any(base.__name__ == "ProviderFailure" for base in type(exc).__mro__)
 
 
+def _build_pipeline(settings: Settings, docs_path: Path | None,
+                    allow_index_build: bool) -> Pipeline:
+    """Row 14: the real graph. Every component, or a refusal that names what is missing.
+
+    A missing classifier or an unset `MODEL_NAME` stops the run here rather than quietly running
+    something weaker: a gate run that silently escalated everything would look like a result.
+    """
+    from ticketing_agent.classify import ClassifierError, IntentClassifier, TrainedClassifier
+    from ticketing_agent.generate import Drafter
+    from ticketing_agent.guardrails import GroundingJudge, Guardrails
+    from ticketing_agent.handover import HandoverWriter
+    from ticketing_agent.pipeline import SupportPipeline
+    from ticketing_agent.provider import ProviderClient
+    from ticketing_agent.route import Router
+
+    retriever = _index(settings, docs_path, allow_index_build)
+    try:
+        settings.require_model()
+    except ConfigError as exc:
+        raise HarnessError(
+            f"{exc} Run with --stub-pipeline to exercise the machinery without a model.") from None
+    try:
+        classifier = IntentClassifier(TrainedClassifier.load(settings.classifier_path))
+    except (ClassifierError, OSError, ValueError) as exc:
+        raise HarnessError(
+            f"the classifier at {settings.classifier_path} could not be loaded: {exc}. Train it "
+            "with scripts/train_classifier.py, or run with --stub-pipeline.") from None
+
+    client = ProviderClient(settings)
+    return SupportPipeline(
+        retriever=retriever, classifier=classifier, router=Router(settings),
+        drafter=Drafter(client), guardrails=Guardrails(judge=GroundingJudge(client)),
+        handover_writer=HandoverWriter(client), settings=settings)
+
+
 def _build_stub_pipeline(settings: Settings, docs_path: Path | None,
                          allow_index_build: bool) -> Pipeline:
-    """Row 6's pipeline: the parts that exist, wired together (FR-14 §2)."""
+    """Row 6's pipeline: ingest and retrieval only, for exercising the run machinery."""
+    return StubPipeline(retriever=_index(settings, docs_path, allow_index_build),
+                        threshold=settings.relevance_threshold)
+
+
+def _index(settings: Settings, docs_path: Path | None, allow_index_build: bool) -> Any:
+    """The documentation index both pipelines need (FR-10)."""
     try:
         retriever = Retriever(settings)
         stats = retriever.build_index(docs_path)
@@ -289,7 +342,7 @@ def _build_stub_pipeline(settings: Settings, docs_path: Path | None,
                   file=sys.stderr)
     except (RetrievalError, ConfigError) as exc:
         raise HarnessError(f"the documentation index could not be prepared: {exc}") from None
-    return StubPipeline(retriever=retriever, threshold=settings.relevance_threshold)
+    return retriever
 
 
 # --- metrics --------------------------------------------------------------------------
@@ -421,8 +474,11 @@ def _governance(results: list[TicketResult], reconciliation: Any) -> dict[str, A
         "guardrail_activations_by_type": dict(sorted(guardrail_failures.items())),
         "private_data_detections": guardrail_failures.get("private_data", 0),
         "redactions_in_log": reconciliation.redactions,
-        "model_calls": reconciliation.model_calls,
-        "cache_hits": reconciliation.cache_hits,
+        # The ticket's own total, not the sum of every row: an intermediate `generation` row and
+        # the terminal row both carry the calls made so far, so summing all rows counted the same
+        # request up to three times. NFR-07's spend figure has to be the real one.
+        "model_calls": sum(r.outcome.model_calls for r in results),
+        "cache_hits": sum(r.outcome.cache_hits for r in results),
     }
 
 
