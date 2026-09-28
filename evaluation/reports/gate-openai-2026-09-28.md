@@ -1,28 +1,28 @@
 # Evaluation run (FR-14)
 
-- Generated: 2026-09-28T17:19:00Z  
+- Generated: 2026-09-28T17:33:42Z  
 - Input: `data/validation_tickets.json` — 80 tickets in the file  
 - Scored against labels: **80 of 80**  
 - Thresholds in use: relevance **0.25**, confidence **0.85**, top_k 5  
-- Wall time: 324.2 s  
+- Wall time: 8.15 s  
 
 ## Volume
 
 | figure | value |
 |---|---|
 | Tickets processed | 80 |
-| Answered automatically | 33 |
-| Escalated | 47 |
-| Blocked by guardrails | 25 |
+| Answered automatically | 42 |
+| Escalated | 38 |
+| Blocked by guardrails | 16 |
 
 ## Business outcomes
 
 | figure | value |
 |---|---|
-| First contact resolution (proxy) | 41.2% |
-| Escalation rate | 58.8% |
-| Processing time, mean | 4037.5 ms |
-| Processing time, median | 4387.3 ms |
+| First contact resolution (proxy) | 52.5% |
+| Escalation rate | 47.5% |
+| Processing time, mean | 91.8 ms |
+| Processing time, median | 91.0 ms |
 
 *The data has no first-reply timestamp, so no customer-visible wait can be computed. What is reported is this system's own processing time per ticket.*
 
@@ -31,9 +31,9 @@
 | figure | value |
 |---|---|
 | Retrieval hit rate | 96.2% (n=53) |
-| Route agreement with labels | 51.2% |
-| Latency median | 4387.3 ms |
-| Latency p95 | 6738.4 ms |
+| Route agreement with labels | 57.5% |
+| Latency median | 91.0 ms |
+| Latency p95 | 95.7 ms |
 | Citations that do not resolve | 0 |
 
 *Retrieval hit rate: Share of labelled-answerable tickets whose expected article was retrieved, at the relevance threshold in use. Tickets with no expected article are excluded, so this has no false-positive counterpart: it cannot fall when retrieval returns too much.*
@@ -75,17 +75,17 @@ Overall accuracy: 100.0%
 |---|---|
 | Decisions logged | 80 |
 | Log reconciles with tickets processed | yes |
-| Guardrail activations by type | {'grounding': 25} |
+| Guardrail activations by type | {'grounding': 16} |
 | Private data detections | 0 |
 | Redactions in the log | 0 |
-| Model calls / cache hits | 158 / 13 |
+| Model calls / cache hits | 0 / 162 |
 
 ## Why tickets ended where they did
 
 | reason | tickets |
 |---|---|
-| none | 33 |
-| ungrounded_draft | 25 |
+| none | 42 |
+| ungrounded_draft | 16 |
 | must_escalate_intent | 14 |
 | no_cited_article | 4 |
 | invalid_citation | 3 |
@@ -100,11 +100,11 @@ Tickets arriving on an unrecognised channel: **0** (D-13: these escalate by rule
 
 | segment | tickets | answered | escalated | retrieval hit rate | median latency | note |
 |---|---|---|---|---|---|---|
-| business | 30 | 40.0% | 60.0% | 100.0% (n=22) | 4671.6 ms |  |
-| enterprise | 8 | 37.5% | 62.5% | 100.0% (n=6) | 4281.6 ms | low confidence (n<10) |
-| standard | 42 | 42.9% | 57.1% | 92.0% (n=25) | 4082.0 ms |  |
+| business | 30 | 53.3% | 46.7% | 100.0% (n=22) | 91.1 ms |  |
+| enterprise | 8 | 62.5% | 37.5% | 100.0% (n=6) | 90.9 ms | low confidence (n<10) |
+| standard | 42 | 50.0% | 50.0% | 92.0% (n=25) | 91.1 ms |  |
 
-Variation across segments: **5.4 points**, **above** NFR-06's 5-point limit (3 segments).
+Variation across segments: **12.5 points**, **above** NFR-06's 5-point limit (3 segments).
 
 Small segments included in that figure, treat with care: enterprise.
 
@@ -112,21 +112,21 @@ Small segments included in that figure, treat with care: enterprise.
 
 | segment | tickets | answered | escalated | retrieval hit rate | median latency | note |
 |---|---|---|---|---|---|---|
-| fluent | 61 | 39.3% | 60.7% | 95.5% (n=44) | 4157.1 ms |  |
-| non_fluent | 19 | 47.4% | 52.6% | 100.0% (n=9) | 4465.3 ms |  |
+| fluent | 61 | 50.8% | 49.2% | 95.5% (n=44) | 91.0 ms |  |
+| non_fluent | 19 | 57.9% | 42.1% | 100.0% (n=9) | 91.1 ms |  |
 
-Variation across segments: **8.1 points**, **above** NFR-06's 5-point limit (2 segments).
+Variation across segments: **7.1 points**, **above** NFR-06's 5-point limit (2 segments).
 
 ### By region
 
 | segment | tickets | answered | escalated | retrieval hit rate | median latency | note |
 |---|---|---|---|---|---|---|
-| asia_pacific | 21 | 52.4% | 47.6% | 100.0% (n=17) | 4477.5 ms |  |
-| europe | 25 | 40.0% | 60.0% | 94.7% (n=19) | 4495.9 ms |  |
-| latin_america | 7 | 14.3% | 85.7% | 100.0% (n=3) | 4888.9 ms | low confidence (n<10) |
-| north_america | 27 | 40.7% | 59.3% | 92.9% (n=14) | 3806.0 ms |  |
+| asia_pacific | 21 | 57.1% | 42.9% | 100.0% (n=17) | 92.2 ms |  |
+| europe | 25 | 52.0% | 48.0% | 94.7% (n=19) | 91.0 ms |  |
+| latin_america | 7 | 28.6% | 71.4% | 100.0% (n=3) | 90.6 ms | low confidence (n<10) |
+| north_america | 27 | 55.6% | 44.4% | 92.9% (n=14) | 90.8 ms |  |
 
-Variation across segments: **38.1 points**, **above** NFR-06's 5-point limit (4 segments).
+Variation across segments: **28.5 points**, **above** NFR-06's 5-point limit (4 segments).
 
 Small segments included in that figure, treat with care: latin_america.
 
@@ -134,21 +134,21 @@ Small segments included in that figure, treat with care: latin_america.
 
 | segment | tickets | answered | escalated | retrieval hit rate | median latency | note |
 |---|---|---|---|---|---|---|
-| chat | 22 | 27.3% | 72.7% | 84.6% (n=13) | 4082.0 ms |  |
-| docs_comment | 16 | 43.8% | 56.2% | 100.0% (n=10) | 4521.2 ms |  |
-| email | 31 | 48.4% | 51.6% | 100.0% (n=22) | 4465.3 ms |  |
-| forum | 11 | 45.5% | 54.5% | 100.0% (n=8) | 3753.5 ms |  |
+| chat | 22 | 40.9% | 59.1% | 84.6% (n=13) | 90.9 ms |  |
+| docs_comment | 16 | 50.0% | 50.0% | 100.0% (n=10) | 91.0 ms |  |
+| email | 31 | 61.3% | 38.7% | 100.0% (n=22) | 91.9 ms |  |
+| forum | 11 | 54.5% | 45.5% | 100.0% (n=8) | 91.1 ms |  |
 
-Variation across segments: **21.1 points**, **above** NFR-06's 5-point limit (4 segments).
+Variation across segments: **20.4 points**, **above** NFR-06's 5-point limit (4 segments).
 
 ### By length
 
 | segment | tickets | answered | escalated | retrieval hit rate | median latency | note |
 |---|---|---|---|---|---|---|
-| long_or_complex | 9 | 66.7% | 33.3% | 100.0% (n=7) | 4157.1 ms | low confidence (n<10) |
-| short | 71 | 38.0% | 62.0% | 95.7% (n=46) | 4480.2 ms |  |
+| long_or_complex | 9 | 77.8% | 22.2% | 100.0% (n=7) | 91.8 ms | low confidence (n<10) |
+| short | 71 | 49.3% | 50.7% | 95.7% (n=46) | 91.0 ms |  |
 
-Variation across segments: **28.7 points**, **above** NFR-06's 5-point limit (2 segments).
+Variation across segments: **28.5 points**, **above** NFR-06's 5-point limit (2 segments).
 
 Small segments included in that figure, treat with care: long_or_complex.
 
@@ -156,9 +156,9 @@ Small segments included in that figure, treat with care: long_or_complex.
 
 | measure | baseline | target | achieved | confidence in the figure |
 |---|---|---|---|---|
-| First contact resolution (proxy) | 42% | ≥60% | 41.2% | proxy: automated handling, not confirmed resolution; n=80 |
-| Escalation rate | 58% | ≤30% | 58.8% | n=80; 100% is by construction until row 14, not a tuning result |
-| Processing time p95 | — | <3 s | 6738.4 ms | no model call in the stub pipeline, so this will rise at row 11 |
+| First contact resolution (proxy) | 42% | ≥60% | 52.5% | proxy: automated handling, not confirmed resolution; n=80 |
+| Escalation rate | 58% | ≤30% | 47.5% | n=80; 100% is by construction until row 14, not a tuning result |
+| Processing time p95 | — | <3 s | 95.7 ms | no model call in the stub pipeline, so this will rise at row 11 |
 | Intent precision (per class) | — | ≥85% | not computable yet (row 8) | labels available for 80 tickets |
 | Retrieval hit rate | — | — | see technical.retrieval_hit_rate_pct | — |
 | Hallucination rate | — | ≤5% (human review) | needs human review of ≥50 responses (two assessors) | — |

@@ -442,21 +442,28 @@ def _comparable(text: str) -> str:
 def _quote_found(quote: str, corpus: str) -> bool:
     """Is every substantial part of this quote really in the passages?
 
-    Measured against the real judge (D-53): PR-03 answers "copy the exact words" by copying
-    **two** spans joined with `; `, and the joined string is a substring of nothing. Three of the
-    four drafts in the first real harness run were blocked by that alone — sentences with 0.74
-    and 1.00 content-word overlap with the passages, rejected on punctuation.
+    Measured against the real judge (D-53, D-56). PR-03 says "copy the exact words", and a model
+    answering a question whose support is a **bulleted list** copies several lines:
 
-    Each part is still required to appear verbatim, so this is not a loosening of the check: a
-    judge that invents a quote fails exactly as it did before.
+        - The authenticator code is rejected as invalid
+        - Device clock drift of more than thirty seconds invalidates time-based codes
+
+    Those lines are each verbatim, often from different chunks, and their concatenation is a
+    substring of nothing. The parts are therefore split out of the **raw** quote — on newlines,
+    semicolons, ellipses and bullet markers — and only then folded for comparison. Folding first
+    destroyed the newlines and so never split anything, which refused all 25 of the drafts the
+    grounding check blocked in the 2026-09-28 gate run (D-56).
+
+    Each part is still required to appear verbatim, so this is not a loosening: a judge that
+    invents a quote fails exactly as it did before.
     """
-    folded = _comparable(quote)
-    if not folded:
+    if not _comparable(quote):
         return True  # an empty quote is the schema's problem, not this function's
-    parts = [p.strip() for p in re.split(r"\s*;\s*|\s*\.\.\.\s*|\n+", folded) if p.strip()]
-    checkable = [p for p in parts if len(p) >= MIN_QUOTE_CHARS]
+    raw_parts = re.split(r"[\n;]+|\s*\.\.\.\s*", quote or "")
+    parts = [_comparable(part.lstrip("-*• \t")) for part in raw_parts]
+    checkable = [part for part in parts if len(part) >= MIN_QUOTE_CHARS]
     if not checkable:
-        return folded in corpus
+        return _comparable(quote) in corpus
     return all(part in corpus for part in checkable)
 
 

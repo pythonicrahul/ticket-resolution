@@ -962,3 +962,40 @@ within a stated spend, the spend must be reported, and the free-tier path must r
 `--stub-pipeline` flag and the rate limiter both survive). The three measurements above are the evidence for
 the change, and they belong in the revision beside it.
 
+## D-56 · Reading the refused drafts: the guardrail was wrong nine times out of twenty-five (FR-12)
+Row 15's remaining question was whether the grounding check refusing 25 of 58 drafts meant the guardrail was
+strict or the drafts were unsupported. `scripts/grounding_review.py` lays each refusal out — the ticket, the
+sentences, each sentence's overlap, PR-03's verdict and the passages — and reading them answered it.
+
+**Not the arithmetic.** All 25 refusals came from the judge, and **every claim sentence in every refused
+draft cleared the 0.3 overlap floor** (minimum 0.33, median 0.76). D-22's threshold, the number the author
+was asked to confirm at row 5, is doing nothing on this data: PR-03 is the whole of the check in practice.
+
+**Not the judge either.** PR-03 returned `supported: true` for every sentence in the cases read. The
+refusals were **our own quote check**, and the cause is specific: a model whose support is a bulleted list
+copies several lines,
+
+    - The authenticator code is rejected as invalid
+    - Device clock drift of more than thirty seconds invalidates time-based codes
+
+each verbatim, often from different chunks, and their concatenation is a substring of nothing. D-53 had
+already fixed the same shape for semicolons — but folded whitespace *before* splitting, which destroyed the
+newlines, so the split never happened. My own fix, half-applied.
+
+**The measurement.** Splitting the **raw** quote on newlines, semicolons, ellipses and bullet markers, then
+folding each part, with every part still required verbatim:
+
+| | answered | escalation rate | blocked by grounding |
+|---|---|---|---|
+| before | 33 of 80 (41.2%) | 58.8% | 25 |
+| after | **42 of 80 (52.5%)** | **47.5%** | 16 |
+
+Nine validation tickets were being escalated by a string-matching artefact. The check is no less strict: an
+invented line among real ones still fails (T-FR12-11j), and the 16 remaining refusals are still unread.
+
+**What this says about the design.** Three times now — D-53, D-54 and this — the thing costing answers was
+not the model, the prompt or the threshold, but code deciding whether a model's output matched a string.
+That is worth remembering when the next number looks like a quality result: **the first thing to check is
+whether anything is being compared by substring.** The exemption list and the overlap floor were reviewed
+carefully at row 5 and row 12; the quote comparison never was, because it looked like plumbing.
+

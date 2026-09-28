@@ -1212,3 +1212,31 @@ tickets is free from the cache.
 
 Row 15 stays `HUMAN`.
 
+## 2026-09-28 · Row 15 · reading the refused drafts · FR-12 · **row 15 still awaiting the author**
+
+The gate's open question was whether grounding refusing 25 of 58 drafts meant a strict guardrail or
+unsupported drafts. `scripts/grounding_review.py` (new) writes `evaluation/reports/grounding_review.md`:
+every refusal with its ticket, its sentences, their overlap, PR-03's verdict and the passages.
+
+**Answer: neither. Nine of the 25 were a defect in our own quote matching** (D-56). PR-03 said
+`supported: true`; the check rejected its quote, because a model supporting a sentence from a bulleted list
+copies several lines whose concatenation appears nowhere. D-53 fixed that shape for semicolons and folded
+whitespace before splitting, which destroyed the newlines — so the fix never applied to the commonest case.
+
+| | answered | escalation rate | blocked by grounding |
+|---|---|---|---|
+| before | 33 of 80 (41.2%) | 58.8% | 25 |
+| after | **42 of 80 (52.5%)** | **47.5%** | 16 |
+
+`uv run pytest -q` → **473 passed**, ruff clean. Two tests pin it, including one asserting that an invented
+bullet among real ones is still refused.
+
+**Still the author's, and now on better evidence:**
+1. **Sign off the gate, or not.** 80/80 processed and logged, reconciliation holds, renamed input gives
+   identical decisions, clean-clone rehearsal and credential scan pass. The system answers 52.5% of
+   validation tickets with citations, escalates 47.5%, and costs about $0.03 a run.
+2. **The 16 remaining grounding refusals are unread.** They are now a much smaller pile and worth one
+   sitting with `evaluation/reports/grounding_review.md`.
+3. **D-22's overlap floor is doing nothing**: every claim sentence in every refused draft cleared it. Keep it
+   as a cheap floor against invention, or drop it and let PR-03 be the whole check — a decision, not a defect.
+

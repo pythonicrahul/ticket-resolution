@@ -637,3 +637,45 @@ def test_T_FR12_11h_punctuation_and_case_do_not_decide_grounding(tmp_path):
     corpus = _comparable("Verify the key's status and expiry on the API keys page.")
     assert _quote_found("Verify the key’s  status and expiry", corpus)
     assert not _quote_found("Verify the key was refunded", corpus)
+
+
+def test_T_FR12_11i_a_quote_copied_from_a_bulleted_list_is_still_support(tmp_path):
+    """D-56, from reading the 25 drafts the gate run refused. PR-03 said `supported: true` for
+    every one of them; our own check rejected the quote, because a model whose support is a
+    bulleted list copies several lines and their concatenation is a substring of nothing.
+
+    The first fix (D-53) split on `;` but folded whitespace *before* splitting, which destroyed
+    the newlines and so never split anything. Nine of 80 validation tickets were being escalated
+    for it.
+    """
+    passages = (Passage(chunk_id="DOC-AUTH-002#0", doc_id="DOC-AUTH-002", title="Codes",
+                        heading="Symptoms",
+                        text="- The authenticator code is rejected as invalid\n"
+                             "- A user has lost the device holding their authenticator",
+                        score=0.7, rank=1),
+                Passage(chunk_id="DOC-AUTH-002#1", doc_id="DOC-AUTH-002", title="Codes",
+                        heading="Causes",
+                        text="- Device clock drift of more than thirty seconds invalidates "
+                             "time-based codes\n- The authenticator was enrolled against a "
+                             "different account", score=0.6, rank=2),
+                )
+    sentence = ("The authenticator code is rejected as invalid for several reasons, including "
+                "device clock drift of more than thirty seconds and enrollment against a "
+                "different account.")
+    bulleted = ("- The authenticator code is rejected as invalid\n"
+                "- Device clock drift of more than thirty seconds invalidates time-based codes")
+
+    report = check(tmp_path, sentence, retrieved=passages, citations=("DOC-AUTH-002#0",),
+                   script=[payload(verdicts(True, quote=bulleted))])
+    assert report.passed is True, report.reason
+
+
+def test_T_FR12_11j_an_invented_bullet_among_real_ones_is_not_support(tmp_path):
+    """Still strict: every line of the quote has to be in the passages, not just one of them."""
+    from ticketing_agent.guardrails import _comparable, _quote_found
+
+    corpus = _comparable("- The code is rejected as invalid\n- Device clock drift invalidates it")
+    assert _quote_found("- The code is rejected as invalid\n- Device clock drift invalidates it",
+                        corpus)
+    assert not _quote_found(
+        "- The code is rejected as invalid\n- Refunds are issued automatically", corpus)
