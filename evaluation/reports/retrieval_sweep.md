@@ -10,21 +10,24 @@ is the author's decision at checkpoint row 7.
 
 ## What each threshold would do
 
-| threshold | hit rate on answerable | top-1 correct | precision at k | answerable left empty | unanswerable correctly empty | mean passages returned |
-|---|---|---|---|---|---|---|
-| 0.00 | 95.2% | 89.9% | 56.9% | 0.0% | 0.0% | 5.0 |
-| 0.10 | 95.2% | 89.9% | 56.9% | 0.0% | 0.0% | 5.0 |
-| 0.15 | 95.2% | 89.9% | 56.9% | 0.0% | 2.1% | 4.97 |
-| 0.20 | 95.2% | 89.9% | 57.2% | 0.0% | 2.1% | 4.92 |
-| 0.25 | 95.2% | 89.9% | 57.5% | 0.0% | 5.6% | 4.86 |
-| 0.30 | 94.4% | 89.6% | 59.7% | 0.6% | 7.7% | 4.64 |
-| 0.35 | 93.8% | 89.4% | 63.8% | 1.4% | 11.9% | 4.27 |
-| 0.40 | 93.3% | 88.8% | 72.6% | 2.2% | 14.7% | 3.62 |
-| 0.45 | 91.9% | 87.7% | 80.2% | 3.4% | 16.1% | 2.99 |
-| 0.50 | 86.6% | 85.4% | 84.8% | 7.3% | 19.6% | 2.4 |
-| 0.60 | 63.0% | 62.5% | 88.2% | 31.9% | 47.6% | 1.21 |
+| threshold | hit rate on answerable | top-1 correct | precision at k | answerable left empty | unanswerable correctly empty | returns nothing | of those, truly unanswerable | mean passages |
+|---|---|---|---|---|---|---|---|---|
+| 0.00 | 95.2% | 89.9% | 56.9% | 0.0% | 0.0% | 0.0% | 0.0% | 5.0 |
+| 0.15 | 95.2% | 89.9% | 56.9% | 0.0% | 2.1% | 0.6% | 100.0% | 4.97 |
+| 0.20 | 95.2% | 89.9% | 57.2% | 0.0% | 2.1% | 0.6% | 100.0% | 4.92 |
+| 0.25 | 95.2% | 89.9% | 57.5% | 0.0% | 5.6% | 1.6% | 100.0% | 4.86 |
+| 0.30 | 94.4% | 89.6% | 59.7% | 0.6% | 7.7% | 2.6% | 84.6% | 4.64 |
+| 0.35 | 93.8% | 89.4% | 63.8% | 1.4% | 11.9% | 4.4% | 77.3% | 4.27 |
+| 0.40 | 93.3% | 88.8% | 72.6% | 2.2% | 14.7% | 5.8% | 72.4% | 3.62 |
+| 0.45 | 91.9% | 87.7% | 80.2% | 3.4% | 16.1% | 7.0% | 65.7% | 2.99 |
+| 0.50 | 86.6% | 85.4% | 84.8% | 7.3% | 19.6% | 10.8% | 51.9% | 2.4 |
+| 0.55 | 77.3% | 76.8% | 87.4% | 16.8% | 29.4% | 20.4% | 41.2% | 1.75 |
+| 0.60 | 63.0% | 62.5% | 88.2% | 31.9% | 47.6% | 36.4% | 37.4% | 1.21 |
+| 0.65 | 42.9% | 42.3% | 93.1% | 54.3% | 64.3% | 57.2% | 32.2% | 0.72 |
 
 **Precision at k cannot reach 100%.** At threshold 0, where all 5 passages are returned, the attainable maximum on this corpus is 70.5%: an expected article has only so many chunks, so the rest of the five are necessarily from other articles even when the ranking is perfect. Above threshold 0 the column rises partly because fewer passages are returned, which is not the same as ranking better — which is why **top-1 correct** is here. That column answers the question the threshold actually turns on: would the drafter see the right passage first.
+
+**The two right-hand columns are the decision.** *Returns nothing* is how often the threshold fires at all; *of those, truly unanswerable* is how often it was right to. A threshold that empties a lot of tickets but is wrong about most of them is escalating answerable work, and the escalation-rate target cannot be reached that way — that is FR-02's confidence threshold and FR-12's grounding, not this one.
 
 Read the empty-rate columns together. A threshold that leaves few answerable
 tickets empty while leaving most unanswerable ones empty is doing the job FR-10 asks for;
@@ -37,7 +40,6 @@ one that returns something for everything is hiding failure (Build Specification
 | threshold | fluent (n=270) | non_fluent (n=87) | gap |
 |---|---|---|---|
 | 0.00 | 96.3% | 92.0% | 4.3 pts |
-| 0.10 | 96.3% | 92.0% | 4.3 pts |
 | 0.15 | 96.3% | 92.0% | 4.3 pts |
 | 0.20 | 96.3% | 92.0% | 4.3 pts |
 | 0.25 | 96.3% | 92.0% | 4.3 pts |
@@ -46,14 +48,15 @@ one that returns something for everything is hiding failure (Build Specification
 | 0.40 | 94.8% | 88.5% | 6.3 pts |
 | 0.45 | 93.3% | 87.4% | 5.9 pts |
 | 0.50 | 88.5% | 80.5% | 8.0 pts |
+| 0.55 | 80.0% | 69.0% | 11.0 pts |
 | 0.60 | 66.3% | 52.9% | 13.4 pts |
+| 0.65 | 44.4% | 37.9% | 6.5 pts |
 
 ### By tier
 
 | threshold | business (n=123) | enterprise (n=59) | standard (n=175) | gap |
 |---|---|---|---|---|
 | 0.00 | 93.5% | 96.6% | 96.0% | 3.1 pts |
-| 0.10 | 93.5% | 96.6% | 96.0% | 3.1 pts |
 | 0.15 | 93.5% | 96.6% | 96.0% | 3.1 pts |
 | 0.20 | 93.5% | 96.6% | 96.0% | 3.1 pts |
 | 0.25 | 93.5% | 96.6% | 96.0% | 3.1 pts |
@@ -62,7 +65,9 @@ one that returns something for everything is hiding failure (Build Specification
 | 0.40 | 91.1% | 94.9% | 94.3% | 3.8 pts |
 | 0.45 | 88.6% | 94.9% | 93.1% | 6.3 pts |
 | 0.50 | 82.9% | 93.2% | 86.9% | 10.3 pts |
+| 0.55 | 74.0% | 84.7% | 77.1% | 10.7 pts |
 | 0.60 | 62.6% | 64.4% | 62.9% | 1.8 pts |
+| 0.65 | 44.7% | 45.8% | 40.6% | 5.2 pts |
 
 **Sample sizes matter here.** The smallest fluency bucket is n=87, so a
 gap of a few points is inside sampling noise (roughly ±6 points at 95% confidence for a

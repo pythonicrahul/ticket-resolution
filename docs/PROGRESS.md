@@ -522,3 +522,58 @@ belongs in the same breath as the test command, every time.
    unresolvable citations as a floor only.
 3. NFR-01's p95 under 3 s is currently flattering (50 ms) because no model is called. It must be re-measured
    once drafting lands at row 11.
+
+## 2026-09-28 · Row 7 · CHECKPOINT: the retrieval relevance threshold · FR-10 · **awaiting the author**
+
+Analysis run, recommendation below, **decision not taken**. `evaluation/reports/retrieval_sweep.md` is
+regenerated with two columns added for this checkpoint: how often the threshold makes its decision (*returns
+nothing*) and how often that decision was right (*of those, truly unanswerable*).
+
+**The population, for context.** Of the 500 development tickets: 357 answerable from the documentation (71%),
+143 not (29%), and 189 labelled `escalate` (38%).
+
+| threshold | hit rate on answerable | answerable lost | returns nothing | of those, truly unanswerable | fluency gap |
+|---|---|---|---|---|---|
+| 0.00 | 95.2% | 4.8% | 0.0% | — | 4.3 pts |
+| **0.25** | **95.2%** | **4.8%** | **1.6%** | **100%** | **4.3 pts** |
+| 0.30 | 94.4% | 5.6% | 2.6% | 85% | 7.8 pts |
+| 0.40 | 93.3% | 6.7% | 5.8% | 72% | 6.3 pts |
+| 0.45 | 91.9% | 8.1% | 7.0% | 66% | 6.0 pts |
+| 0.50 | 86.6% | 13.4% | 10.8% | 52% | 8.1 pts |
+| 0.60 | 63.0% | 37.0% | 36.4% | 37% | 13.4 pts |
+
+**The finding that matters most, and it is not about which number to pick.** The relevance threshold cannot
+deliver the escalation-rate target, and must not be asked to. 29% of tickets are unanswerable, but even at
+0.60 — where a third of answerable tickets have already lost their article — only 36% of tickets return
+nothing and only 37% of *those* are genuinely unanswerable. Retrieval's "nothing is relevant" signal simply
+does not separate the two populations: the documentation is close enough in wording to most unanswerable
+tickets to score above any threshold that keeps the answerable ones. Getting escalation to ≤30% is FR-02's
+confidence threshold and FR-12's grounding check doing their jobs, not this one. If this threshold is ever
+raised to chase the escalation number, it will destroy quality and fairness together and still miss.
+
+**Recommendation: 0.25.** Three reasons, each measurable:
+1. **It costs nothing.** Answerable tickets lost is 4.8%, identical to threshold 0. Hit rate is unchanged at
+   95.2%, top-1 at 89.9%.
+2. **Every decision it makes is correct.** Of the tickets it leaves empty, **100%** are genuinely
+   unanswerable — 8 tickets that would otherwise have been answered from irrelevant passages. At 0.30 that
+   precision drops to 85%, and it keeps falling.
+3. **It is the last threshold that satisfies NFR-06.** The fluent/non-fluent gap is 4.3 points at 0.25 and
+   **7.8 at 0.30** — over the 5-point limit. Raising the threshold makes the system worse for non-fluent
+   English faster than it makes it safer, which is exactly what the Governance Framework's fairness audit
+   predicts for retrieval.
+
+**What choosing 0.25 accepts.** It leaves 135 of the 143 unanswerable tickets retrieving something, so the
+later stages have to catch them: grounding must fail on a draft built from irrelevant passages, and the
+confidence threshold must escalate low-confidence classifications. If those two do not hold up at rows 9 and
+12, the answer is to strengthen them, not to raise this threshold.
+
+**Alternatives, honestly.** If you prefer a larger safety margin at the retrieval stage, **0.40** is the next
+defensible point: 93.3% hit rate, 72% of empties genuinely unanswerable, and a 6.3-point fluency gap — which
+means accepting an NFR-06 finding and reporting it. Anything at or above 0.50 is not defensible on this data.
+
+**How to apply it**: set `RELEVANCE_THRESHOLD` in `.env`. No code change (FR-10 §3.3), and the harness prints
+the threshold in use in both reports so the gate run shows what was chosen.
+
+**Open question this raises for row 7's sign-off**: section chunking cannot answer a question whose answer
+spans two sections, and a parent-document strategy would. The sweep suggests it is not urgent — top-1 is
+89.9% — so I have not built it.

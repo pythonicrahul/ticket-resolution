@@ -30,7 +30,7 @@ from ticketing_agent.config import Settings, load_settings
 from ticketing_agent.retrieve import Retriever
 
 ROOT = Path(__file__).resolve().parents[1]
-THRESHOLDS = (0.0, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60)
+THRESHOLDS = (0.0, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65)
 
 
 def main() -> int:
@@ -114,9 +114,16 @@ def _measure(threshold: float, retrieved: list[dict]) -> dict:
             if ticket["expected"] & {d for d, _ in kept(ticket)}:
                 bucket[0] += 1
 
+    # The decision the threshold actually makes is "return nothing". Two columns judge it: how
+    # often it fires, and how often it is right — i.e. of the tickets left empty, how many were
+    # genuinely unanswerable. Without the second, a high empty rate looks like success.
+    empty_tickets = [t for t in retrieved if not kept(t)]
+    empty_and_unanswerable = sum(1 for t in empty_tickets if not t["answerable"])
     return {
         "threshold": threshold,
         "hit_rate": _pct(hits, len(answerable)),
+        "empty_rate_all": _pct(len(empty_tickets), len(retrieved)),
+        "empty_precision": _pct(empty_and_unanswerable, len(empty_tickets)),
         "top1": _pct(top1, len(answerable)),
         "precision": _pct(correct, returned_answerable),
         "empty_answerable": _pct(sum(1 for t in answerable if not kept(t)), len(answerable)),
@@ -167,14 +174,15 @@ def _render(rows: list[dict], retrieved: list[dict], stats, args, ceiling: float
         "## What each threshold would do",
         "",
         ("| threshold | hit rate on answerable | top-1 correct | precision at k "
-         "| answerable left empty | unanswerable correctly empty | mean passages returned |"),
-        "|---|---|---|---|---|---|---|",
+         "| answerable left empty | unanswerable correctly empty | returns nothing "
+         "| of those, truly unanswerable | mean passages |"),
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         lines.append(
             f"| {row['threshold']:.2f} | {row['hit_rate']}% | {row['top1']}% | "
             f"{row['precision']}% | {row['empty_answerable']}% | {row['empty_unanswerable']}% "
-            f"| {row['mean_returned']} |")
+            f"| {row['empty_rate_all']}% | {row['empty_precision']}% | {row['mean_returned']} |")
 
     lines += [
         "",
@@ -185,6 +193,12 @@ def _render(rows: list[dict], retrieved: list[dict], stats, args, ceiling: float
          "fewer passages are returned, which is not the same as ranking better — which is why "
          "**top-1 correct** is here. That column answers the question the threshold actually "
          "turns on: would the drafter see the right passage first."),
+        "",
+        ("**The two right-hand columns are the decision.** *Returns nothing* is how often the "
+         "threshold fires at all; *of those, truly unanswerable* is how often it was right to. A "
+         "threshold that empties a lot of tickets but is wrong about most of them is escalating "
+         "answerable work, and the escalation-rate target cannot be reached that way — that is "
+         "FR-02's confidence threshold and FR-12's grounding, not this one."),
         "",
         "Read the empty-rate columns together. A threshold that leaves few answerable",
         "tickets empty while leaving most unanswerable ones empty is doing the job FR-10 asks for;",
