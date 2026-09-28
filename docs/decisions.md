@@ -559,3 +559,28 @@ rises with its safety (D-35 found the same shape in retrieval), and it is now th
    FR-08's alternatives could restore answer rate without reopening the leak. It is unmeasured — the
    out-of-fold alternatives are not saved — and the author chose the simple threshold first, deliberately.
 
+## D-45 · The free-model roster turned over, and the free tier cannot finish a gate run (NFR-07, FR-14)
+Checked against `https://openrouter.ai/api/v1/models` on 2026-09-28, before the first real provider call.
+
+**Every free id this repository had suggested was gone.** `.env` held `meta-llama/llama-3.1-8b-instruct`
+*without* the `:free` suffix, which on OpenRouter is the **paid** endpoint — NFR-07 allows no spend, so the
+first real call would have been both a charge and a requirement breach. `.env.example` suggested the same id
+with the suffix, and that id no longer exists either; nor do llama-3.3-70b, deepseek-r1 or qwen-2.5-72b. Of
+458 catalogued models, 21 are zero-cost today.
+
+**Chosen, with the reason in `.env.example`:** `google/gemma-4-31b-it:free` for `MODEL_NAME` (dense
+instruction-tuned, 262k context, advertises structured outputs, which is what `complete_structured` needs for
+`schemas.AnswerDraft`) and `qwen/qwen3.8-27b:free` for `JUDGE_MODEL_NAME` — a different vendor and family on
+purpose, because FR-12's grounding check is not independent if the judge is the model being judged.
+`openrouter/free` is rejected despite being free: it is a router alias that picks a model per request, so the
+same input can reach different models and NFR-08's determinism is gone.
+
+**The operational finding, which belongs in the PRD revision.** OpenRouter's free tier allows 20 requests a
+minute and **50 a day**, rising to 1000/day only for an account that has purchased $10 of credits at any
+point. A gate run over the 80 validation tickets needs roughly 100 calls at T = 0.85 — a draft and a
+grounding check for each of ~51 answered tickets — so **the free tier as configured cannot complete one gate
+run in a day**. Three ways out, none of them code: buy the $10 once, batch the run across days, or rely on
+the response cache (which makes re-runs nearly free but does nothing for the first pass). Row 15 has to
+account for this, and `scripts/provider_smoke.py` now warns when a configured id has left the free roster
+rather than retrying a 404 three times.
+

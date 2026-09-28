@@ -80,6 +80,8 @@ def main() -> int:
               "deliberately no flag to override this. Fix MODEL_NAME in .env first.")
         return 1
 
+    _check_catalogue(configured.llm_base_url, model, configured.judge_model_name.strip())
+
     settings = Settings(**{**configured.__dict__, "llm_cache_path": Path(args.cache)})
     recorder = _Recorder(settings)
     client = ProviderClient(settings, transport=recorder)
@@ -186,6 +188,32 @@ def _failure(client: ProviderClient, max_tokens: int) -> bool:
         return False
     print("   FAILED: a nonexistent model returned a usable response, which cannot be right.")
     return False
+
+
+def _check_catalogue(base_url: str, model: str, judge: str) -> None:
+    """Say plainly that an id has left the free roster, instead of retrying a 404 three times.
+
+    The roster turns over — every free id this repository suggested in its first week has since
+    gone — and `MalformedModelOutput after 3 attempts` is a poor way to learn that. A catalogue
+    that cannot be read is only a warning: it must not stop a smoke run.
+    """
+    import json as _json
+    import urllib.request
+
+    if "openrouter.ai" not in base_url:
+        return
+    try:
+        with urllib.request.urlopen("https://openrouter.ai/api/v1/models", timeout=20) as reply:
+            catalogue = _json.load(reply)
+    except Exception as exc:  # noqa: BLE001 - informational only
+        print(f"   (could not read the model catalogue: {type(exc).__name__}; continuing)\n")
+        return
+    free = {m["id"] for m in catalogue.get("data", []) if str(m.get("id", "")).endswith(":free")}
+    for name, value in (("MODEL_NAME", model), ("JUDGE_MODEL_NAME", judge)):
+        if value and value not in free:
+            print(f"   WARNING: {name}={value!r} is not in OpenRouter's current free catalogue. "
+                  f"Free ids now include: {', '.join(sorted(free)[:6])}…")
+    print(f"   catalogue: {len(free)} free ids, MODEL_NAME present: {model in free}\n")
 
 
 class _Recorder:
