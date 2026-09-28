@@ -1,0 +1,30 @@
+# The metrics /metrics/prometheus exports (NFR-05). Generated from the endpoint itself by
+# scripts/write_metrics_reference.py, so the dashboard and the exporter cannot disagree.
+# Sample values below come from one synthetic row and mean nothing.
+
+# HELP ticketing_decisions_total Terminal decisions recorded.
+# TYPE ticketing_decisions_total counter
+ticketing_decisions_total 2
+# HELP ticketing_decisions_by_outcome_total Terminal decisions by outcome.
+# TYPE ticketing_decisions_by_outcome_total counter
+ticketing_decisions_by_outcome_total{outcome="auto_respond"} 1
+ticketing_decisions_by_outcome_total{outcome="escalate"} 1
+# HELP ticketing_escalations_by_reason_total Escalations by the reason recorded on the row.
+# TYPE ticketing_escalations_by_reason_total counter
+ticketing_escalations_by_reason_total{reason="no_retrieval"} 1
+# HELP ticketing_guardrail_blocks_total Guardrail checks that failed, by check name.
+# TYPE ticketing_guardrail_blocks_total counter
+ticketing_guardrail_blocks_total{check="grounding"} 1
+# HELP ticketing_rows_by_stage_total Every logged row, by stage.
+# TYPE ticketing_rows_by_stage_total counter
+ticketing_rows_by_stage_total{stage="routing"} 2
+# HELP ticketing_model_calls_total Provider requests, as recorded on the rows.
+# TYPE ticketing_model_calls_total counter
+ticketing_model_calls_total 1
+# HELP ticketing_kill_switch 1 when automatic replies are switched off.
+# TYPE ticketing_kill_switch gauge
+ticketing_kill_switch 0
+# HELP ticketing_threshold The thresholds in force for this deployment.
+# TYPE ticketing_threshold gauge
+ticketing_threshold{kind="confidence"} 0.85
+ticketing_threshold{kind="relevance"} 0.25

@@ -1,0 +1,81 @@
+{
+  "title": "CloudServe support system",
+  "uid": "cloudserve-support",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {"from": "now-24h", "to": "now"},
+  "description": "NFR-05: what the system decided, and why. Every panel reads a metric exported by /metrics/prometheus, which is itself a view of the decision log rather than of in-process counters — so a restart loses nothing. ops/metrics_reference.txt lists what is exported and a test fails if a panel queries anything else.",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Automation is switched off",
+      "description": "FR-16. When this reads 1 every ticket escalates by rule, and the escalation rate below will be 100% for that reason rather than a quality collapse. FR-16 §7 recorded that nothing alerted on this; this panel is the answer.",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "ticketing_kill_switch", "refId": "A"}],
+      "fieldConfig": {"defaults": {"mappings": [
+        {"type": "value", "options": {"0": {"text": "answering", "color": "green"},
+                                      "1": {"text": "SWITCHED OFF", "color": "red"}}}]}}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Decisions recorded",
+      "description": "NFR-05 asks for 100% of decisions logged. This is the count the reconciliation in the harness report is measured against.",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "ticketing_decisions_total", "refId": "A"}]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Escalation rate",
+      "description": "The business number from the PRD. Read it with the panel below: an escalation for provider_unavailable is an availability problem, not a quality one, and the 2026-09-28 gate run showed how easily the two are confused.",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "100 * ticketing_decisions_by_outcome_total{outcome=\"escalate\"} / clamp_min(ticketing_decisions_total, 1)", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Provider requests",
+      "description": "NFR-07's spend figure, from the rows themselves. A jump here without a jump in decisions means retries.",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "ticketing_model_calls_total", "refId": "A"}]
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Why tickets escalated",
+      "description": "The single most useful panel for a support manager: which rule is sending work to people. FR-09's four intents are expected here; a spike in ungrounded_draft means the drafter and the documentation disagree, and a spike in provider_unavailable means the model, not the tickets.",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 4},
+      "targets": [{"expr": "sort_desc(ticketing_escalations_by_reason_total)", "refId": "A", "legendFormat": "{{reason}}"}]
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Guardrail blocks by check",
+      "description": "The Governance Framework's five checks. A reply blocked here was never sent: these are the failures the system caught, not the ones it made.",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 4},
+      "targets": [{"expr": "sort_desc(ticketing_guardrail_blocks_total)", "refId": "A", "legendFormat": "{{check}}"}]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Answered and escalated over time",
+      "description": "Rates rather than totals, so a change of pace is visible. The two lines crossing is the signal the PRD's first-contact-resolution target is about.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "targets": [{"expr": "rate(ticketing_decisions_by_outcome_total[15m])", "refId": "A", "legendFormat": "{{outcome}}"}]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Rows by stage, and the thresholds in force",
+      "description": "Which stage each logged row came from (ingest, routing, generation, validation, handover), and the confidence and relevance thresholds this deployment is running — so a reader never has to guess whether a placeholder was replaced.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "targets": [
+        {"expr": "ticketing_rows_by_stage_total", "refId": "A", "legendFormat": "{{stage}}"},
+        {"expr": "ticketing_threshold", "refId": "B", "legendFormat": "{{kind}}"}
+      ]
+    }
+  ]
+}

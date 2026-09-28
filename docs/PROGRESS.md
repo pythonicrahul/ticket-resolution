@@ -1240,3 +1240,34 @@ bullet among real ones is still refused.
 3. **D-22's overlap floor is doing nothing**: every claim sentence in every refused draft cleared it. Keep it
    as a cheap floor against invention, or drop it and let PR-03 be the whole check — a decision, not a defect.
 
+## 2026-09-28 · Rows 16 and 17 · the API and the dashboard · FR-04, FR-05, NFR-05
+
+**Files changed**
+- `docs/specs/FR-04.md` (new). `src/ticketing_agent/api.py`: `build_app`, `/health`, `/search`,
+  `POST /tickets`, `/queue`, `/metrics`, `/metrics/prometheus`. Was a one-line placeholder.
+- `ops/grafana_dashboard.json` (8 panels), `ops/metrics_reference.txt`,
+  `scripts/write_metrics_reference.py`. `tests/test_fr04_api.py` (new, 22 tests).
+
+**Result**: `uv run pytest -q` → **495 passed** (473 before). `uv run ruff check .` → clean.
+
+**Verified against a running server**, not only the test client: 90 chunks indexed, and FR-04's own
+criterion — `"my deployment keeps dying"` → `DOC-DEPLOY-001` — satisfied with the **real** embedder, top
+hit at 0.495. `/queue`, `/metrics` and `/metrics/prometheus` all answer.
+
+**Three decisions worth stating**
+1. **One way in.** `POST /tickets` builds the same `SupportPipeline` the harness runs and writes its row
+   through the same `DecisionLog.perform`. There is no lighter path for a ticket that arrives over HTTP —
+   the API would otherwise be the way to get an answer without the guardrails.
+2. **The scrape reads the decision log, not in-process counters.** A counter resets when the process does,
+   and NFR-05 asks for 100% of decisions to be auditable. `/metrics/prometheus` is a view of the log, so a
+   restart loses nothing and the dashboard and the harness report cannot disagree.
+3. **The dashboard cannot drift from the exporter.** `ops/metrics_reference.txt` is generated *from the
+   endpoint* by `scripts/write_metrics_reference.py`, and a test fails if any panel queries a metric that
+   file does not list. A dashboard of empty panels is the usual failure here.
+
+**Two open items recorded in the spec rather than silently accepted**
+- **The API is unauthenticated**, and `/queue` exposes customer text. Fine on a laptop, not fine anywhere
+  else: FR-04 §7 says so, and the governance declaration should carry it as an accepted risk.
+- **Nothing logs what agents search for**, so the "no-hit report" the PRD imagines — a cluster of questions
+  with no article — cannot be produced yet. It is the data that would tell CloudServe what to write next.
+
