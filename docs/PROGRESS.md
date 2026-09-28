@@ -1066,3 +1066,83 @@ would have failed the gate run at row 15 on the first ticket the documentation c
 2. The graph makes up to three provider calls per answered ticket (draft, judge, and a handover on
    escalation). At 8000 tokens/minute that sets the pace of a gate run (D-47).
 
+## 2026-09-28 · Row 15 · CHECKPOINT: THE GATE · FR-14 · **awaiting the author**
+
+The full unattended run, the renamed-copy run and the Build Specification §06 rehearsal are done. The
+machinery passes. **The quality figures do not mean what they appear to**, and that is the finding.
+
+### The run
+
+`uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/`
+→ `evaluation/reports/gate-2026-09-28.md`, exit code **0**.
+
+| | |
+|---|---|
+| Tickets processed / in file | **80 / 80** |
+| Decisions logged, reconciliation | **80, holds** — no missing, extra, duplicated or gapped rows |
+| Wall time | **27 minutes** (1614 s), unattended |
+| Answered / escalated | 17 / 63 (**78.8%** escalation rate) |
+| Blocked by guardrails | 28 (all `grounding`) |
+| Private data detections | 0 |
+| Model calls / cache hits | 282 / 10 |
+
+### Finding 1: a quarter of the run never got a fair attempt
+
+**21 of 80 tickets — VAL-0057 to VAL-0080 — escalated as `provider_unavailable`.** Groq throttled the
+account, the circuit breaker opened after five consecutive failures, and the remaining tickets were then
+consumed in seconds because an open breaker fails fast. 282 model calls in 27 minutes is 10.4 a minute,
+against the ~6 a minute that 8000 tokens/minute allows (D-47): throttling was arithmetically certain.
+
+The behaviour is *correct* — every ticket still ended as a logged escalation with a handover, which is A11 —
+but **the headline escalation rate of 78.8% is an availability artefact, not a quality result.** Read only
+the 59 tickets that got an attempt:
+
+| outcome | count | share of attempted |
+|---|---|---|
+| answered | 17 | **28.8%** |
+| blocked by grounding | 27 | 45.8% |
+| must-escalate intent | 14 | 23.7% |
+| documentation had no answer | 1 | 1.7% |
+
+**This is a defect in the harness, not only in the tier.** An unattended run should pace itself against the
+provider's limit, or stop and say so, rather than finishing quickly by not trying. As it stands a reader of
+`metrics.md` could mistake the tail for a quality measurement. The provider-unavailable count is in the
+report, which is what makes this visible at all.
+
+### Finding 2: grounding blocks 61% of the drafts that reach it
+
+**27 of the 44 drafts that survived routing were refused by the grounding guardrail.** That is now the
+single biggest lever on the answer rate — bigger than the confidence threshold the author set at row 10.
+Row 14 already found and fixed one cause (the exact-quote check breaking on a judge's multi-span quote,
+D-53); this is what remains after that fix, so it is either PR-03 being genuinely strict or the drafts being
+genuinely unsupported. **Nobody has read the blocked drafts yet**, and that reading is what decides whether
+the system answers ~29% or ~60% of tickets.
+
+### Finding 3: the machinery does what it claims
+
+- **Renamed copy**: `--input /tmp/nobody-has-seen-this-2026.json` ran with **10 of 10 identical decisions**
+  and **zero model calls** (every reply served from the cache). No data file name is hardcoded (CLAUDE.md's
+  first non-negotiable), and the same ticket routes the same way twice (A5, NFR-08), demonstrated rather
+  than asserted.
+- **Build Spec §06 rehearsal** in a clean clone: `uv sync` works, 469 tests pass with placeholder
+  credentials and no network, training reproduces the same fingerprint, and a credential scan of the working
+  tree *and the full git history* is clean. The rehearsal found the README's setup path was broken — it
+  never said to train the classifier — which is fixed (commit `a2396d3`), along with a reproducible
+  `scripts/demo_walkthrough.py`.
+
+### What the author decides
+
+1. **Re-run the gate with pacing before any quality claim is made.** The 78.8% escalation rate cannot be
+   quoted as a result while 26% of the run was throttled. Pacing is a small change (wait when the breaker is
+   open, or budget tokens per minute); it costs another ~40 minutes of run time and no money. **Recommended
+   before anything else**, because every other number depends on it.
+2. **Read a sample of the 27 grounding blocks.** If PR-03 is too strict, the answer rate roughly doubles; if
+   the drafts are genuinely unsupported, then 29% is the honest figure and the PRD's target needs revisiting.
+   This is a judgement about answer quality and it is the author's, not the system's.
+3. **Accept or reject the free tier for the gate.** NFR-07 allows no spend, so "buy a higher tier" is not
+   available: the choices are pacing, batching across days, or stating in the PRD revision that an 80-ticket
+   unattended run cannot complete on a free account without pacing.
+
+Row 15 → `HUMAN`. The gate is not signed off: the machinery passes and the quality figures are not yet
+measurable.
+

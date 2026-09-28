@@ -1,0 +1,440 @@
+{
+  "business": {
+    "escalation_rate_pct": 78.8,
+    "first_contact_resolution_proxy_pct": 21.2,
+    "processing_time_ms": {
+      "mean": 20163.3,
+      "median": 15047.8
+    },
+    "response_time_note": "The data has no first-reply timestamp, so no customer-visible wait can be computed. What is reported is this system's own processing time per ticket."
+  },
+  "gaps": [
+    "Intent precision and recall: no classifier yet (row 8).",
+    "Hallucination rate and citation accuracy: need human review of at least 50 responses by two assessors (Evaluation Framework tier two); the harness reports unresolvable citations as a floor only.",
+    "Private data in outbound replies: nothing is sent yet (row 11), so zero here means 'nothing was generated', not 'nothing leaked'.",
+    "Customer satisfaction: no live customers; the Evaluation Framework's rubric proxy needs a human sample.",
+    "Confidence calibration: needs the classifier's confidences (row 8).",
+    "Response time: the data has no first-reply timestamp, so only processing time is real."
+  ],
+  "governance": {
+    "cache_hits": 10,
+    "decisions_logged": 80,
+    "guardrail_activations_by_type": {
+      "grounding": 28
+    },
+    "model_calls": 282,
+    "private_data_detections": 0,
+    "reconciles": true,
+    "reconciliation": {
+      "duplicated": [],
+      "extra": [],
+      "index_gaps": [],
+      "missing": [],
+      "recorded_tickets_in": 80,
+      "terminal_rows": 80,
+      "tickets_in": 80,
+      "tickets_without_index": []
+    },
+    "redactions_in_log": 0
+  },
+  "ingest_defects": {},
+  "reasons": {
+    "must_escalate_intent": 14,
+    "no_answer_drafted": 1,
+    "none": 17,
+    "provider_unavailable": 21,
+    "ungrounded_draft": 27
+  },
+  "results_table": [
+    {
+      "achieved": "21.2%",
+      "baseline": "42%",
+      "confidence": "proxy: automated handling, not confirmed resolution; n=80",
+      "measure": "First contact resolution (proxy)",
+      "target": "\u226560%"
+    },
+    {
+      "achieved": "78.8%",
+      "baseline": "58%",
+      "confidence": "n=80; 100% is by construction until row 14, not a tuning result",
+      "measure": "Escalation rate",
+      "target": "\u226430%"
+    },
+    {
+      "achieved": "43204.5 ms",
+      "baseline": "\u2014",
+      "confidence": "no model call in the stub pipeline, so this will rise at row 11",
+      "measure": "Processing time p95",
+      "target": "<3 s"
+    },
+    {
+      "achieved": "not computable yet (row 8)",
+      "baseline": "\u2014",
+      "confidence": "labels available for 80 tickets",
+      "measure": "Intent precision (per class)",
+      "target": "\u226585%"
+    },
+    {
+      "achieved": "see technical.retrieval_hit_rate_pct",
+      "baseline": "\u2014",
+      "confidence": "\u2014",
+      "measure": "Retrieval hit rate",
+      "target": "\u2014"
+    },
+    {
+      "achieved": "needs human review of \u226550 responses (two assessors)",
+      "baseline": "\u2014",
+      "confidence": "\u2014",
+      "measure": "Hallucination rate",
+      "target": "\u22645% (human review)"
+    },
+    {
+      "achieved": "needs human review; the harness counts unresolvable citations only",
+      "baseline": "\u2014",
+      "confidence": "\u2014",
+      "measure": "Citation accuracy",
+      "target": "\u226595% (human review)"
+    },
+    {
+      "achieved": "no reply is sent yet (row 11)",
+      "baseline": "\u2014",
+      "confidence": "\u2014",
+      "measure": "Private data in outbound text",
+      "target": "0"
+    },
+    {
+      "achieved": "see segments.*.variation_points",
+      "baseline": "\u2014",
+      "confidence": "\u2014",
+      "measure": "Cross-segment variation",
+      "target": "<5 points"
+    }
+  ],
+  "run": {
+    "decision_log": "storage/gate-2026-09-28.db",
+    "generated_at": "2026-09-28T15:51:08Z",
+    "input": "data/validation_tickets.json",
+    "limit": null,
+    "run_id": "gate-2026-09-28",
+    "scored_against_labels": "80 of 80",
+    "thresholds": {
+      "confidence_threshold": 0.85,
+      "relevance_threshold": 0.25,
+      "retrieval_top_k": 5
+    },
+    "tickets_in_file": 80,
+    "wall_seconds": 1614.36
+  },
+  "segments": {
+    "channel": {
+      "low_confidence_segments": [],
+      "rows": {
+        "chat": {
+          "answered_pct": 31.8,
+          "escalated_pct": 68.2,
+          "low_confidence": false,
+          "median_latency_ms": 14288.0,
+          "retrieval_hit_rate_pct": 84.6,
+          "retrieval_scored": 13,
+          "tickets": 22
+        },
+        "docs_comment": {
+          "answered_pct": 6.2,
+          "escalated_pct": 93.8,
+          "low_confidence": false,
+          "median_latency_ms": 129.1,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 10,
+          "tickets": 16
+        },
+        "email": {
+          "answered_pct": 19.4,
+          "escalated_pct": 80.6,
+          "low_confidence": false,
+          "median_latency_ms": 23805.2,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 22,
+          "tickets": 31
+        },
+        "forum": {
+          "answered_pct": 27.3,
+          "escalated_pct": 72.7,
+          "low_confidence": false,
+          "median_latency_ms": 13654.6,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 8,
+          "tickets": 11
+        }
+      },
+      "variation_basis": "4 segments",
+      "variation_points": 25.6
+    },
+    "fluency": {
+      "low_confidence_segments": [],
+      "rows": {
+        "fluent": {
+          "answered_pct": 21.3,
+          "escalated_pct": 78.7,
+          "low_confidence": false,
+          "median_latency_ms": 13654.6,
+          "retrieval_hit_rate_pct": 95.5,
+          "retrieval_scored": 44,
+          "tickets": 61
+        },
+        "non_fluent": {
+          "answered_pct": 21.1,
+          "escalated_pct": 78.9,
+          "low_confidence": false,
+          "median_latency_ms": 18093.1,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 9,
+          "tickets": 19
+        }
+      },
+      "variation_basis": "2 segments",
+      "variation_points": 0.2
+    },
+    "length": {
+      "low_confidence_segments": [
+        "long_or_complex"
+      ],
+      "rows": {
+        "long_or_complex": {
+          "answered_pct": 22.2,
+          "escalated_pct": 77.8,
+          "low_confidence": true,
+          "median_latency_ms": 22832.8,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 7,
+          "tickets": 9
+        },
+        "short": {
+          "answered_pct": 21.1,
+          "escalated_pct": 78.9,
+          "low_confidence": false,
+          "median_latency_ms": 14944.5,
+          "retrieval_hit_rate_pct": 95.7,
+          "retrieval_scored": 46,
+          "tickets": 71
+        }
+      },
+      "variation_basis": "2 segments",
+      "variation_points": 1.1
+    },
+    "region": {
+      "low_confidence_segments": [
+        "latin_america"
+      ],
+      "rows": {
+        "asia_pacific": {
+          "answered_pct": 23.8,
+          "escalated_pct": 76.2,
+          "low_confidence": false,
+          "median_latency_ms": 13654.6,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 17,
+          "tickets": 21
+        },
+        "europe": {
+          "answered_pct": 16.0,
+          "escalated_pct": 84.0,
+          "low_confidence": false,
+          "median_latency_ms": 20321.7,
+          "retrieval_hit_rate_pct": 94.7,
+          "retrieval_scored": 19,
+          "tickets": 25
+        },
+        "latin_america": {
+          "answered_pct": 14.3,
+          "escalated_pct": 85.7,
+          "low_confidence": true,
+          "median_latency_ms": 2644.7,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 3,
+          "tickets": 7
+        },
+        "north_america": {
+          "answered_pct": 25.9,
+          "escalated_pct": 74.1,
+          "low_confidence": false,
+          "median_latency_ms": 14944.5,
+          "retrieval_hit_rate_pct": 92.9,
+          "retrieval_scored": 14,
+          "tickets": 27
+        }
+      },
+      "variation_basis": "4 segments",
+      "variation_points": 11.6
+    },
+    "tier": {
+      "low_confidence_segments": [
+        "enterprise"
+      ],
+      "rows": {
+        "business": {
+          "answered_pct": 30.0,
+          "escalated_pct": 70.0,
+          "low_confidence": false,
+          "median_latency_ms": 11788.2,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 22,
+          "tickets": 30
+        },
+        "enterprise": {
+          "answered_pct": 12.5,
+          "escalated_pct": 87.5,
+          "low_confidence": true,
+          "median_latency_ms": 13063.4,
+          "retrieval_hit_rate_pct": 100.0,
+          "retrieval_scored": 6,
+          "tickets": 8
+        },
+        "standard": {
+          "answered_pct": 16.7,
+          "escalated_pct": 83.3,
+          "low_confidence": false,
+          "median_latency_ms": 15258.0,
+          "retrieval_hit_rate_pct": 92.0,
+          "retrieval_scored": 25,
+          "tickets": 42
+        }
+      },
+      "variation_basis": "3 segments",
+      "variation_points": 17.5
+    }
+  },
+  "technical": {
+    "citations_that_do_not_resolve": 0,
+    "classification": {
+      "overall_accuracy_pct": 100.0,
+      "per_class": {
+        "account_access": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 4
+        },
+        "api_key_issue": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 6
+        },
+        "api_usage_question": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 4
+        },
+        "authentication_failure": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 3
+        },
+        "billing_query": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 10
+        },
+        "compliance_request": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 1
+        },
+        "configuration_help": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 3
+        },
+        "data_export": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 1
+        },
+        "data_residency": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 6
+        },
+        "database_issue": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 1
+        },
+        "deployment_failure": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 5
+        },
+        "feature_request": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 3
+        },
+        "integration_help": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 3
+        },
+        "onboarding": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 4
+        },
+        "performance_degradation": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 3
+        },
+        "quota_or_overage": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 2
+        },
+        "rate_limit": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 1
+        },
+        "rollback_request": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 6
+        },
+        "security_incident": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 4
+        },
+        "sso_configuration": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 1
+        },
+        "unclear_request": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 6
+        },
+        "webhook_issue": {
+          "precision_pct": 100.0,
+          "recall_pct": 100.0,
+          "support": 3
+        }
+      }
+    },
+    "latency_ms": {
+      "median": 15047.8,
+      "p95": 43204.5
+    },
+    "retrieval_hit_rate_note": "Share of labelled-answerable tickets whose expected article was retrieved, at the relevance threshold in use. Tickets with no expected article are excluded, so this has no false-positive counterpart: it cannot fall when retrieval returns too much.",
+    "retrieval_hit_rate_pct": 96.2,
+    "retrieval_scored_tickets": 53,
+    "route_agreement_note": "Agreement with the labelled expected_route. While the answering path is unbuilt every ticket escalates, so this figure is simply the share of tickets labelled escalate \u2014 it does not measure routing.",
+    "route_agreement_pct": 51.2
+  },
+  "unknown_channel_tickets": 0,
+  "volume": {
+    "answered_automatically": 17,
+    "blocked_by_guardrails": 28,
+    "escalated": 63,
+    "tickets_processed": 80
+  }
+}
