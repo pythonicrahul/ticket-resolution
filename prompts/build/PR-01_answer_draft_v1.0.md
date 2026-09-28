@@ -3,7 +3,7 @@ id: PR-01
 version: 1.0
 category: Build
 serves: FR-11, FR-03, FR-12 (supports FR-06)
-model: Llama 3.1 8B Instruct on a free tier (Groq or OpenRouter), set by MODEL_NAME in .env; temperature 0
+model: whatever MODEL_NAME names in .env, on a free tier; openai/gpt-oss-120b on Groq as of 2026-09-28 (D-47); temperature 0
 ---
 
 # PR-01 · Answer drafting: writes a cited reply from retrieved passages only.

@@ -12,3 +12,13 @@ Every prompt the project uses. Change the text → bump the version, rename the 
 | PR-06 | 1.0 | Specification | All FRs (one run per requirement) | `prompts/development/PR-06_spec_from_requirement_v1.0.md` |
 | PR-07 | 1.0 | Specification (implementation, development only) | All FRs (one run per requirement) | `prompts/development/PR-07_implement_requirement_v1.0.md` |
 | PR-08 | 1.0 | Review | All FRs; NFR-04, NFR-05 | `prompts/development/PR-08_review_against_requirement_v1.0.md` |
+
+## Change history
+
+- 2026-09-28 · `PR-01 v1.0` — **frontmatter only**, no version bump. The `model:` line named a
+  specific free model (Llama 3.1 8B on Groq or OpenRouter) that no longer exists on either free
+  tier (D-45, D-47). It now names whatever `MODEL_NAME` is set to, with the model in use at the
+  time recorded beside it. The register's rule is that a change to the **prompt text** means a new
+  version file; this text is unchanged, and `prompts.Prompt.fingerprint` covers the sent block
+  only, so the fingerprint is unaffected too.
+

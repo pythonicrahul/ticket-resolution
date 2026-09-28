@@ -30,7 +30,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
@@ -419,7 +419,19 @@ class ProviderClient:
                     f"attempt: {second}",
                     attempts=response.attempts + repaired_response.attempts,
                     prompt_version=prompt_version, schema=schema.__name__) from None
-            return StructuredResponse(value=parsed.value, response=repaired_response,
+            # The row must show both requests. `repaired_response.provider_requests` counts only
+            # the repair call, so a model that broke its JSON contract and was asked again would
+            # be logged as one call — and on a free tier that column is what says whether a run
+            # fits the allowance (FR-15 §2, FR-13 §3; row-11 review).
+            whole = replace(
+                repaired_response,
+                provider_requests=(response.provider_requests
+                                   + repaired_response.provider_requests),
+                attempts=response.attempts + repaired_response.attempts,
+                latency_ms=response.latency_ms + repaired_response.latency_ms,
+                cached=response.cached and repaired_response.cached,
+            )
+            return StructuredResponse(value=parsed.value, response=whole,
                                       notes=parsed.notes, repaired=True)
         return StructuredResponse(value=parsed.value, response=response, notes=parsed.notes)
 

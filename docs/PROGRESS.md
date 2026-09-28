@@ -869,3 +869,48 @@ roughly six drafting calls a minute, so a gate run is 15-20 minutes and must pac
 
 Nothing in the repository is blocked now. Row 11 (B-08 answer drafting, FR-11 and FR-06) is next.
 
+## 2026-09-28 · Row 11 · B-08 Answer drafting with citations · FR-11, FR-06
+
+**Files changed**
+- `docs/specs/FR-11.md`, `docs/specs/FR-06.md` (new, written before the code).
+- `src/ticketing_agent/generate.py`: `Drafter`, `DraftResult`, `assemble_reply`, the citation rules and
+  FR-06's three constants. Was a one-line placeholder.
+- `src/ticketing_agent/prompts.py`: a real loader — by id and version, SYSTEM/USER split, fingerprint,
+  and a refusal for any file whose shape cannot be read confidently. Also a placeholder before this.
+- `src/ticketing_agent/provider.py`: `complete_structured` now reports both requests when it repairs.
+- `tests/test_fr11_draft.py` (new, 35 tests), `tests/test_prompts.py` (new, 11 tests).
+- `prompts/build/PR-01_answer_draft_v1.0.md`: `model:` frontmatter only — the named free model no longer
+  exists on either free tier. No version bump (the register's rule is about prompt text); recorded in
+  `prompts/README.md`'s new change history.
+- `docs/decisions.md` D-48, D-49.
+
+**Result**: `uv run pytest -q` → **359 passed** (338 at first green, 313 before this row).
+`uv run ruff check .` → clean. Every test runs offline against `FakeTransport`, including one that replays
+the reply `openai/gpt-oss-120b` actually produced (D-47).
+
+**Checked against the real model as well** (not part of the suite): three development tickets through the
+real chain — retrieval → PR-01 → structured parse → citation check → assembled reply. All three drafted
+usable, cited replies; two were cache hits after the review's escaping change, which shows the escaping is a
+no-op on this corpus.
+
+**Independent review** (reviewer subagent, fresh session, PR-08 v1.0): 13 findings — 3 high, 5 medium,
+5 low. All highs and all mediums fixed; details in D-48. The one that mattered most: **an unretrieved
+article id could still reach the customer inline in the prose**, because only the `citations` array was
+checked and PR-01's own rule 2 shows citations as inline brackets. No fixture contained a bracket, so the
+whole suite was blind to it.
+
+**Not fixed, on purpose**
+- `PROMPTS_DIR` is derived from the repo layout, so a non-editable install would not find `prompts/`.
+  The project runs from source; worth a line in the README before anyone packages it.
+- Inline ids are validated but not rewritten, so a customer may see `… [DOC-BILL-001#2].` beside the
+  `Based on:` line. Tidying it means editing the model's words, which FR-06 §3 deliberately does not do.
+- A model inventing a support email inside a cited sentence is not caught here; it is FR-12's private-data
+  guardrail at row 12. T-FR06-7 now says so rather than implying coverage it does not have.
+
+**Open questions for the human**
+1. FR-11 refuses a whole draft when one sentence is uncited — stricter than the PRD's 95% target. Keep, or
+   drop the uncited sentence and send the rest?
+2. The wording of `DISCLOSURE` and `HUMAN_ROUTE` is customer-facing and should be read by Marcus or Ravi.
+3. Should an automated reply carry a greeting? It would mean putting the customer's name back into outbound
+   text, which FR-11 keeps out of the model's sight.
+

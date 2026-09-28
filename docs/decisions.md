@@ -664,3 +664,65 @@ classifier that looks directly relevant to FR-12's `instruction_integrity` check
 reason is not quality: a guardrail that needs the provider stops working during an outage, and CLAUDE.md
 requires guardrails to run on every reply. Pattern matching (D-24) keeps working when the model does not.
 
+## D-48 · Drafting refuses more than it writes, and the review found three ways round it (FR-11, FR-06)
+Row 11. The component that finally calls a model is mostly rules about not sending things.
+
+**What it refuses.** A citation outside this ticket's retrieval kills the whole draft rather than being
+dropped, because dropping it leaves the sentence standing with nothing behind it. A sentence with no
+citation does the same — stricter than the PRD's "citation accuracy ≥95%", which measures a reviewed
+sample, while this decides whether a reply reaches a customer at all. `answerable: false` is a correct
+outcome, not a failure. **This strictness is the author's to confirm** (FR-11 §7): if it escalates too much
+in practice, the alternative is to drop the uncited sentence and send the rest, which is a different
+artefact from the one the model wrote.
+
+**The independent review found three highs, all fixed:**
+1. **An unretrieved id could still reach the customer, inline in the prose.** PR-01 rule 2 shows the
+   citation as `[DOC-AUTH-001#2]`, so a model following the example writes the id into the sentence text —
+   and the sentence text is what the customer reads. Only the `citations` array was checked. A reply could
+   therefore cite `DOC-BILL-009#1`, which retrieval never returned, while passing every test: none of the
+   fixtures, and not the recorded real reply, happened to contain a bracket. Both are now checked, as is a
+   chunk of a retrieved article that was not itself retrieved.
+2. **The drafter's "never raises" docstring was false.** `complete()` raises a bare `ValueError` when
+   `MODEL_NAME` is blank, which is not a `ProviderFailure`. With a mistyped `.env`, every answerable ticket
+   would have escalated through the harness's generic exception handler with an opaque reason instead of a
+   typed row. Now `drafting_failed`, with the exception type in `detail`.
+3. **`model_calls` under-reported real requests.** The repair attempt inside `complete_structured` logged
+   two provider requests as one, and a failed draft logged up to four retries as zero. On a free tier that
+   column is what says whether a run fits the allowance (D-47's 8000 tokens/minute), so it has to be true.
+
+**Mediums fixed:** the row now names the prompt actually loaded and carries its fingerprint, rather than a
+module constant a constructor argument could contradict; a prompt template declaring a slot this code does
+not fill is refused instead of sending the literal `{subject}`; passage text and titles are escaped like
+ticket text, since an article containing `</passage>` could otherwise present the model with content
+attributed to a legitimately retrieved id; an escalating row falls back to a generic explanation rather than
+being refused by FR-13 at `record()` time, which would mean escalating with nothing written down.
+
+**My own three mistakes while fixing those**, each caught by the tests: the placeholder guard first compared
+against the *rendered* text, so an article titled `A "{text}" title` looked like an unfilled slot; the
+`PromptError` was raised outside the guard it was meant to be caught by; and a loop over four failure
+reasons shared one response cache, so it tested the first reason four times.
+
+**The prompt loader is now real.** `prompts.py` was a one-line placeholder while `prompts/README.md`
+promised "code loads prompts by id and version". It reads the file, splits SYSTEM/USER, fingerprints the
+sent block, and refuses a file whose shape it cannot read confidently — including a bad-output example shown
+above the real prompt, which taking the first fenced block would have loaded silently. It serves both shapes
+in the register: the build prompts with roles, and the development and evaluation prompts without.
+
+## D-49 · The disclosure, and what it may not say (FR-06)
+The three lines FR-06 requires are module constants marked `DISCLOSURE_VERSION = "v1"` and appended in code,
+never shown to the model, so a reply cannot lose its disclosure to a paraphrase or an injection attempt.
+
+**No contact details are invented.** The corpus carries none — 0 of 200 expert answers contain an email,
+phone number or URL (measured at row 2) — so "how to reach a person" is *reply to this message*, which is
+true on all four channels. Inventing a support address would be a fabricated fact in an outbound reply,
+which is the thing FR-11 exists to prevent.
+
+**The source line names articles, not chunks:** `Based on: Invoices and usage breakdown (DOC-BILL-001)`. A
+chunk ordinal means nothing to a customer; the decision log keeps the chunk id, which is what makes the
+citation checkable.
+
+**For the author:** the wording of both constants is a business decision and should be read by Marcus or
+Ravi before a customer sees it. There is no greeting and no sign-off, because the ground-truth replies have
+none — adding "Hi {name}" would reintroduce the customer's name into outbound text, which FR-11 keeps out of
+the model's sight entirely.
+
