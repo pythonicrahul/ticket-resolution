@@ -206,6 +206,42 @@ def test_submitting_a_ticket_returns_its_outcome_and_logs_it(tmp_path, retriever
         "every decision is logged, the API included (FR-13)")
 
 
+def test_a_block_inside_the_pipeline_is_recorded_for_an_api_ticket_too(tmp_path, retriever):
+    """FR-12 §5: "the block is recorded". The API used to process the ticket and *then* attach
+    the log, so every row the graph wrote as it went was silently lost — a guardrail block
+    through the harness was recorded and the same block through HTTP was not."""
+    class BlockingPipeline(FakePipeline):
+        def __init__(self):
+            super().__init__()
+            self.log = None
+
+        def attach_log(self, log):
+            self.log = log
+
+        def process(self, ticket):
+            from ticketing_agent.logging_store import DecisionEntry
+
+            assert self.log is not None, "the log must be attached before the work starts"
+            self.log.perform(DecisionEntry(
+                ticket_id=ticket.ticket_id, stage="validation", decision="block",
+                reason="private_data_in_draft", requirement_ids=["FR-12"],
+                guardrail_results=[["private_data", False]]), lambda: None)
+            return super().process(ticket)
+
+    from ticketing_agent.logging_store import DecisionLog
+
+    pipeline = BlockingPipeline()
+    response = client(tmp_path, retriever, pipeline).post("/tickets", json={
+        "ticket_id": "API-B", "channel": "email", "subject": "Question",
+        "body": "Please help with my invoice.", "received_at": "2026-05-01T09:00:00Z"})
+
+    assert response.status_code == 200
+    with DecisionLog(settings(tmp_path).decision_log_path) as log:
+        decisions = [r["decision"] for r in log.rows()]
+    assert "block" in decisions, "the block was not recorded"
+    assert decisions.index("block") < decisions.index("escalate"), "and it came first"
+
+
 def test_a_ticket_that_cannot_be_read_is_a_400_not_a_crash(tmp_path, retriever):
     response = client(tmp_path, retriever).post("/tickets", json={"channel": "email"})
     assert response.status_code in (400, 422)

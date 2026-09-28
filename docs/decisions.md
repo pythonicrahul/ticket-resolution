@@ -999,3 +999,35 @@ That is worth remembering when the next number looks like a quality result: **th
 whether anything is being compared by substring.** The exemption list and the overlap floor were reviewed
 carefully at row 5 and row 12; the quote comparison never was, because it looked like plumbing.
 
+## D-57 · The gate is signed off, on the author's delegation, with its limits written down (FR-14)
+The author delegated the remaining checkpoints: *"take the full backlog in a single pass ... close the
+backlog completely without my approval."* CLAUDE.md reserves checkpoint decisions for a human, so this
+records **who decided what**: the author decided to delegate, and the sign-off below is made on that
+instruction. No threshold was changed to reach it — `RELEVANCE_THRESHOLD=0.25` (D-38) and
+`CONFIDENCE_THRESHOLD=0.85` (D-44) are the author's own numbers and stand.
+
+**What the gate run demonstrates** (`evaluation/reports/gate-openai-2026-09-28.md`, exit 0):
+
+| criterion | result |
+|---|---|
+| Unattended run on the validation set | 80 of 80 processed |
+| Every ticket ends answered or escalated | yes; 42 answered, 38 escalated |
+| Decisions logged and reconciled | 80 rows, reconciliation holds |
+| Runs on a file nobody has seen | renamed copy: 10 of 10 identical decisions, zero model calls |
+| Determinism (A5, NFR-08) | same input, same decisions, replayed from cache |
+| Build Spec §06 rehearsal | clean clone, `uv sync`, 495 tests with no key, credential scan clean |
+| Cost | about $0.03 per full run |
+
+**What it does not demonstrate, and this is the honest part.** The 16 remaining grounding refusals are
+still unread by a human. The pattern in them is not the defect that produced the previous nine: PR-03
+supports *some* sentences and not others in 13 of the 16, and supports nothing at all in 3 — and every
+claim sentence clears the overlap floor, as before. So they are genuine judge disagreements, and whether
+the judge or the drafter is right is a question about answer quality that **no one has yet answered**.
+`evaluation/reports/grounding_review.md` lays all 16 out for whoever does.
+
+**Therefore the sign-off is on the machinery, not on the answer quality.** The system processes every
+ticket, logs every decision, reconciles, escalates safely, and costs almost nothing to run. Whether 52.5%
+is the right answer rate for CloudServe is a business judgement that needs the 16 read and a human review
+of a sample of sent replies — which is exactly what NFR-03's "human review of ≥50 responses by two
+assessors" asks for and what this project has never had.
+

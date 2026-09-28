@@ -1271,3 +1271,82 @@ hit at 0.495. `/queue`, `/metrics` and `/metrics/prometheus` all answer.
 - **Nothing logs what agents search for**, so the "no-hit report" the PRD imagines — a cluster of questions
   with no article — cannot be produced yet. It is the data that would tell CloudServe what to write next.
 
+## 2026-09-28 · Row 15 · THE GATE — signed off on the author's delegation · FR-14
+
+The author delegated the checkpoints (D-57). The gate passes on the machinery and is explicitly **not** a
+sign-off on answer quality: 80 of 80 processed, 80 logged, reconciliation holds, a renamed input gives
+identical decisions with zero model calls, the clean-clone rehearsal and credential scan pass, ~$0.03 a run.
+
+42 of 80 answered (52.5%), 38 escalated — 16 by grounding, 14 by FR-09's four intents, 7 by citation
+problems, 1 because the documentation had no answer.
+
+**The 16 grounding refusals are genuine judge disagreements, not the defect that caused the previous nine**:
+PR-03 supports some sentences and not others in 13 of them, none at all in 3, and every claim sentence
+clears the overlap floor. They are laid out in `evaluation/reports/grounding_review.md` and remain unread by
+a human, which is the one thing standing between this and a claim about answer quality.
+
+Row 15 → `DONE`.
+
+## 2026-09-29 · Row 18 · CHECKPOINT: build complete · closed on the author's delegation
+
+Every backlog row is `DONE`. The author delegated the remaining checkpoints (D-57), so this closes the
+backlog and states plainly what exists, what does not, and what the PRD revision has to record.
+
+### What exists
+
+16 requirements, **15 written specs** (FR-05 is specified inside `docs/specs/FR-08.md`, which is where the
+urgency classifier and the queue ordering live), **496 tests**, **57 recorded decisions**, 30 commits.
+
+| | |
+|---|---|
+| Ingest, four channels, never raises | FR-07 |
+| Retrieval over the documentation, section-aware chunks, relevance floor 0.25 | FR-10, FR-04 |
+| Intent and urgency, calibrated, alternatives recorded | FR-08, FR-05 |
+| Routing: D-16 precedence, four always-escalate intents, money/date rules, kill switch, floor 0.85 | FR-02, FR-09, FR-03, FR-16 |
+| Drafting with citations, the disclosure and a greeting | FR-11, FR-06 |
+| Five guardrails on every draft, blocking never redacting | FR-12, NFR-04 |
+| A handover on every escalation, template when a model must not be used | FR-01 |
+| Decision log, reconciliation, the Governance Framework's minimum record | FR-13, NFR-05 |
+| Provider client: retries, backoff, breaker, cache, structured output | FR-15 |
+| The graph, and the unattended harness behind `--input/--output` | FR-14 |
+| API for agents, Prometheus scrape, Grafana dashboard | FR-04, FR-05, NFR-05 |
+
+**The gate**: 80 of 80 tickets, 42 answered (52.5%), 38 escalated, reconciliation holds, ~$0.03 a run, and a
+renamed input file gives identical decisions with zero model calls.
+
+### What does not exist, stated rather than implied
+
+1. **No human has read a sent reply.** NFR-03 asks for "human review of ≥50 responses by two assessors with
+   an agreement rate". Nothing in this build substitutes for it, and the 16 grounding refusals in
+   `evaluation/reports/grounding_review.md` are the first thing that review should look at.
+2. **Rows 16 and 17 were not independently reviewed.** The reviewer session hit a rate limit mid-run. Every
+   other row got a fresh-session review, and those reviews found one severe and thirteen high findings
+   between them, so this is a real gap rather than a formality. Reviewing my own work immediately afterwards
+   did find one defect — the API attached the decision log *after* processing a ticket, so a guardrail block
+   arriving over HTTP was silently never recorded — which is the argument for finishing the review properly.
+3. **The API is unauthenticated** and `/queue` exposes customer text (FR-04 §7).
+4. **Three intents miss NFR-03's 85% per-class precision**, and the stated confidence is 42.6 points out of
+   calibration in one 25-prediction band (D-40). Both are reported, neither is fixed.
+5. **Urgency is effectively two levels, not three** (D-41), and nothing alerts on the kill switch being on
+   beyond the dashboard panel.
+6. **The author-only documents** in `docs/pack_alignment.md` §4 are still unwritten: the risk register with
+   named owners, the six-step incident response, the governance declaration, the kill-switch authorisation,
+   and the log retention policy.
+
+### What the PRD revision (Stage 5) must record
+
+- **NFR-07 changed** from "no spend" to a budget (D-55), with the three free-tier measurements as evidence.
+- **The confidence threshold is 0.85** (D-44) and it breaches NFR-06's 5-point fairness limit: a 10.1-point
+  gap between fluent and non-fluent answer rates. That was accepted knowingly, as the price of not
+  auto-answering a misclassified security incident.
+- **FR-09's rule fires on the predicted intent**, so on unseen wording roughly 2% of must-escalate tickets
+  would be answered at a lower threshold (D-43). The threshold is what stands behind the PRD's "zero
+  auto-responses", not the rule alone.
+- **The 0.3 overlap floor is currently rejecting nothing** (D-56); PR-03 is the whole of the grounding check
+  in practice.
+- **Three of the last four defects that cost answers were string comparisons**, not models or prompts
+  (D-53, D-54, D-56). The lesson belongs in the revision: when a quality number looks wrong, check whether
+  something is being compared by substring before changing a threshold.
+
+Row 18 → `DONE`. The backlog is closed.
+

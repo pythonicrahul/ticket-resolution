@@ -141,10 +141,14 @@ def build_app(settings: Settings, retriever: Any | None = None,
                 status_code=400,
                 detail=f"the ticket could not be read: {', '.join(normalised.defects)}")
 
-        outcome = state.pipeline.process(normalised)
         with DecisionLog(settings.decision_log_path, run_id="api") as log:
-            # FR-13, CLAUDE.md: the row is written before the outcome is returned to the caller.
+            # The log is attached **before** the ticket is processed, not after. Processing first
+            # meant the rows the graph writes as it goes — above all the guardrail `block` row
+            # FR-12 §5 requires — were silently never written for a ticket submitted here, while
+            # the same ticket through the harness recorded them.
             state.attach(log)
+            outcome = state.pipeline.process(normalised)
+            # FR-13, CLAUDE.md: the row is written before the outcome is returned to the caller.
             log.perform(outcome.to_entry(), lambda: None)
         return TicketOut(
             ticket_id=normalised.ticket_id, decision=outcome.decision, reason=outcome.reason,
