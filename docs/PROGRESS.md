@@ -932,3 +932,44 @@ rewritten: T-FR11-4 (now asserts the sentence is sent *and* logged), T-FR11-4b, 
 Checked against the real model: `DEV-0002` now returns a reply opening `Hi Kavya,` with the same cited body
 and the same three closing lines.
 
+## 2026-09-28 · Row 12 · B-09 Guardrails · FR-12 (with NFR-04, FR-03, FR-11, FR-02)
+
+**Files changed**
+- `src/ticketing_agent/guardrails.py`: the Governance Framework's five checks, `check_ticket` (pre-draft),
+  `GroundingJudge` (PR-03), `GuardrailReport`, and every pattern table. Was a one-line placeholder.
+- `tests/test_fr12_guardrails.py` (new, 47 tests). `tests/test_engineered_fixtures.py`: the mirrored tables
+  deleted, the shipped ones imported — what FR-12 §7 and this row asked for.
+- `src/ticketing_agent/logging_store.py`: `governance_record()` no longer raises on a row whose
+  `guardrail_results` carry a third element.
+- `docs/specs/FR-12.md` updated (the exemption lists, the `reply`/`sentences` inputs, `check_error`,
+  T-FR12-24 and the tests added after the review). `docs/decisions.md` D-51.
+
+**Result**: `uv run pytest -q` → **417 passed** (405 at first green, 370 before this row).
+`uv run ruff check .` → clean. The judge runs through `FakeTransport`, so PR-03's real prompt, its parsing
+and its exact-quote check are exercised with no network and no key.
+
+**Independent review** (reviewer subagent, fresh session, PR-08 v1.0): 17 findings — 6 high, 8 medium,
+3 low. All highs and all mediums fixed; D-51 has the detail. The two worth repeating:
+
+- **The engineered draft corpus had never been run through the code**, and disagreed with it: both drafts it
+  declares clean were blocked. The causes were that FR-12's own "a draft that says plainly it does not know
+  passes" was never implemented, and that FR-06's mandatory lines were exempted by string literals copied
+  from `generate.py` — so the next permitted change to the disclosure wording would have failed **every**
+  reply in a run. The test that claimed to cover the first asserted it with a supported factual sentence.
+- **`governance_record()` raised on every guardrail row**, because the row carried triples where FR-13
+  declares pairs — i.e. the assessor-facing projection crashed on exactly the rows FR-12's acceptance
+  criterion requires to exist.
+
+**Not fixed, on purpose**
+- `PRIVATE_IP` stays in the draft-side list (FR-12 §7 flagged it as "remove if it proves noisy"). It now
+  requires four octets, so a `10.1.2` version string no longer fires, but nothing has measured it against
+  `documentation.json` yet. Worth a line in row 15's gate run.
+- The overlap floor stays at 0.3 (D-22, re-measured at row 5). Row 12 changed what counts as a claim, not
+  the number; if the author wants the number revisited, the measurement script is `scripts/` work.
+
+**Open questions for the human**
+1. The refusal and FR-06 exemptions are new behaviour written from FR-12 §3.2.2's own sentence. They widen
+   what is *not* a claim, which is the safety-relevant direction — worth a read.
+2. `check_error` is now distinct from `provider_unavailable` in the log. Both escalate; only the reason
+   differs, and the metrics report should probably count them separately at row 14.
+

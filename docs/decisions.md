@@ -747,3 +747,56 @@ that does not change. The first name only, because a full legal name reads like 
 holding markup, an email address, a newline or anything over 60 characters falls back to `Hello,`: a broken
 name field is a data problem, and "Hello," is always correct.
 
+## D-51 · Row 12's review: the guardrails were checking a copy of themselves (FR-12, NFR-04)
+Row 12 shipped the five Governance Framework checks and moved the pattern tables out of the tests, which
+FR-12 §7 asked for. The independent review found that the move fixed the ticket-side half and left the
+draft-side half unchecked, and that the unchecked half disagreed with the code.
+
+**The corpus said clean, the code said blocked.** `tests/fixtures/draft_replies.json` exists, in FR-12 §2's
+own words, "so every post-draft check can be tested offline with no model call" — and no test had ever run it
+through `check_draft`. Run through it, **both drafts the corpus declares clean were blocked**. Two causes,
+both worth more than the fixture:
+
+1. **"A draft that says plainly it does not know passes" was never implemented.** FR-12 §3.2.2 says so in
+   those words; an honest refusal has ~0 overlap with any passage, so the floor blocked exactly the answer
+   the PRD asks for. Refusals are now an exemption, listed in the spec. The test that claimed to prove this
+   asserted it with a *supported factual sentence*, so it was green while the behaviour was broken.
+2. **FR-06's mandatory lines were exempted by copied string literals.** The disclosure, the human route, the
+   greeting and the source line each have ~0 overlap, so the only thing keeping mandatory text under the
+   floor was a prefix typed twice in two modules — and FR-06 explicitly allows that wording to change behind
+   `DISCLOSURE_VERSION`. The day it changed, **every reply in a run would have failed grounding**. The
+   fixtures already carried an older wording, which is what surfaced it. Now matched against `generate.py`'s
+   constants and by shape.
+
+**The assessor-facing projection crashed on every guardrail row.** `log_fields()` emitted
+`[name, passed, detail]` triples; FR-13 §2 declares pairs and `governance_record()` unpacks two. So
+`governance_record` raised `ValueError` on exactly the rows FR-12's acceptance criterion requires to exist.
+Fixed both ways: the row carries pairs and the details moved into `detail`, and the projection now reads
+`result[:2]` so a future writer cannot crash it either.
+
+**Three more that could each release something.** PR-03 was asked about *exempt* sentences, where its own
+rules give it no lawful answer — `supported` demands a quote, a pleasantry has none, and the schema rejects
+supported-without-quote — so any reply containing "Thank you for getting in touch" could block; only the
+claims are sent now. `grounding` read `sentences` without checking they reconstruct `reply`, so a caller
+passing an empty list silently disabled the one check D-50 made load-bearing; that is now a failure. And
+`overlap` returned **1.0** for a sentence with no content words — a fail-open default in the one arithmetic
+guard, now 0.0.
+
+**Patterns, in both directions.** `PHONE` required a leading `+` and missed `0207 946 0123`, `(212)
+555-0199` and `555-0100`; `NATIONAL_ID` was dashes-only and missed `123456789`. Widening `PHONE` then
+matched a 16-digit *invoice reference*, which `SYN-PII-LOOKALIKE-002` exists to catch — so it counts digits
+now (7 to 15, E.164's ceiling). `PRIVATE_IP` matched `version 10.1.2` and now requires four octets.
+
+**Also fixed:** a judge that answered badly is `check_error`, not `provider_unavailable` (one is prompt
+drift, the other is FR-15 availability, and they need opposite responses); a failed check reports the
+requests it cost, the same defect the row-11 review fixed in `generate.py`; `all_reasons` is written, so a
+draft failing three checks loses none of them; the draft is escaped before it enters PR-03's prompt, since
+it is model output derived from customer text; and a reply that already failed `private_data` is **not**
+sent to the provider — §3.1.2's rationale is that a secret must never be transmitted, and a reply that is
+certainly blocked does not need transmitting to confirm it.
+
+**What the review confirmed holds:** no flag, kwarg, env var or `except` can skip a check or turn a failure
+into a pass; no matched private value reaches any detail, report or log row; the overlap floor is computed
+against the union of retrieved passages (D-22), and uncited sentences are checked (D-50); verdict indices
+fail safe in every direction; and `guardrails.py` is now genuinely the only copy of every table.
+

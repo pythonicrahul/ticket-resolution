@@ -513,8 +513,11 @@ def governance_record(row: dict[str, Any]) -> dict[str, Any]:
         "threshold_applied": row["threshold_applied"],
         "action_taken": row["decision"],
         "reason": row["explanation"] or row["reason"],
-        "guardrail_results": {name: ("pass" if passed else "fail")
-                              for name, passed in row["guardrail_results"]},
+        # `result[:2]` rather than unpacking: FR-13 §2 declares pairs, and a writer that carried
+        # a third element (a detail) crashed this projection on exactly the rows FR-12's
+        # acceptance criterion requires to be recorded (D-51). The extra is ignored, not fatal.
+        "guardrail_results": {result[0]: ("pass" if result[1] else "fail")
+                              for result in row["guardrail_results"]},
         "prompt_version": row["prompt_version"],
         "requirement_ids": row["requirement_ids"],
     }

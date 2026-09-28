@@ -15,8 +15,22 @@ from pathlib import Path
 
 import pytest
 
+from ticketing_agent.guardrails import (
+    EMAIL,
+    INJECTION_MARKERS,
+    markers_in,
+    phones_in,
+    secrets_in,
+)
 from ticketing_agent.ingest import load_tickets, normalise_ticket
-from ticketing_agent.route import matches_triggers
+from ticketing_agent.route import DATE_TRIGGERS, MONEY_TRIGGERS, matches_triggers
+from ticketing_agent.route import PRECEDENCE as ROUTE_PRECEDENCE
+
+#: D-16's order, restricted to the reasons a ticket's own text can produce. Taken from the shipped
+#: table rather than restated, so a fixture's expected reason cannot drift from the router's.
+PRECEDENCE = tuple(r for r in ROUTE_PRECEDENCE
+                   if r in {"private_data_in_ticket", "instruction_injection_detected",
+                            "money_commitment_requested", "date_commitment_requested"})
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -41,45 +55,12 @@ DRAFT_KEYS = {"draft_id", "for_ticket", "text", "citations", "retrieved", "synth
 DRAFT_SYNTHETIC_KEYS = {"category", "why", "expected_passed", "expected_reason",
                         "expected_failures", "requirement_ids"}
 
-# --- tables mirrored from the specs (see module docstring) --------------------------
-
-# docs/specs/FR-12.md §3.1.1
-INJECTION_MARKERS = (
-    "ignore all previous", "ignore previous instruction", "ignore the above",
-    "ignore your instruction", "disregard your", "disregard all previous",
-    "disregard the above", "you are now", "pretend to be", "new instructions",
-    "system:", "assistant:", "</ticket>", "<ticket>", "reveal your",
-    "show me your prompt", "system prompt", "repeat your instructions",
-    "your instructions verbatim", "developer mode", "jailbreak", "bypass your",
-)
-#: D-24: these two match only at the start of a line, so a pasted log does not escalate.
-LINE_ANCHORED = ("system:", "assistant:")
-# docs/specs/FR-03.md §3.1
-MONEY_TRIGGERS = (
-    "refund", "refunded", "refunding", "credit note", "credit back", "account credit",
-    "service credit", "sla credit", "chargeback", "charge back", "dispute", "disputing",
-    "disputed charge", "money back", "reimburse", "reimbursement", "compensation",
-    "compensate", "waive", "waiver", "write off", "cancel the charge",
-    "reverse the charge", "reversal", "goodwill",
-)
-# docs/specs/FR-03.md §3.2
-DATE_TRIGGERS = (
-    "eta", "when will you fix", "when will this be fixed", "when it will be fixed",
-    "by when", "firm date", "fix date", "delivery date", "commit to a date",
-    "guarantee a date", "deadline for the fix", "promise", "sla breach",
-)
-# docs/specs/FR-12.md §3.1.2: pre-draft, high-risk secrets only. These are what make a
-# ticket escalate before any model call; a bare email address does not.
-CREDENTIAL_PATTERNS = (r"password\s*[:=]", r"passwd\s*[:=]", r"secret\s*[:=]", r"token\s*[:=]",
-                       r"api[_-]?key\s*[:=]", r"private[_-]?key\s*[:=]", r"private key")
-EMAIL = r"[\w.+-]+@[\w-]+\.[\w.]+"
-PHONE = r"(?:\+\d[\d\s().-]{6,}\d)"
-NATIONAL_ID = r"\b\d{3}-\d{2}-\d{4}\b"
-DIGIT_RUN = r"(?:\d[ -]?){12,19}"
-
-# docs/specs/FR-12.md §3.4, restricted to the reasons a ticket's text can produce.
-PRECEDENCE = ("private_data_in_ticket", "instruction_injection_detected",
-              "money_commitment_requested", "date_commitment_requested")
+# --- the shipped tables, imported rather than mirrored -------------------------------
+#
+# These used to be copies. FR-12 §7 said row 12 must make `guardrails.py` the single source of
+# truth and point the tests here, and the row-11 review showed why: while `phrases()` was its own
+# regex, the fixtures agreed with a defect in the rule instead of catching it (D-42). The specs
+# are still checked against these tables in both directions by T-FR12-5.
 
 # docs/specs/FR-03.md §3.1 and §3.2, grouped: T-FR03-13 needs one fixture per family.
 MONEY_FAMILIES = {
@@ -115,38 +96,16 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def luhn_ok(text: str) -> bool:
-    digits = [int(c) for c in text if c.isdigit()]
-    if not 13 <= len(digits) <= 19:
-        return False
-    total = 0
-    for i, digit in enumerate(reversed(digits)):
-        if i % 2:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        total += digit
-    return total % 10 == 0
-
-
-def secrets_in(text: str) -> list[str]:
-    """FR-12 §3.1.2: the high-risk secrets that escalate a ticket before any model call."""
-    found = []
-    if re.search(NATIONAL_ID, text):
-        found.append("national_id")
-    if any(luhn_ok(m.group()) for m in re.finditer(DIGIT_RUN, text)):
-        found.append("card_number")
-    if any(re.search(p, text, re.IGNORECASE) for p in CREDENTIAL_PATTERNS):
-        found.append("credential")
-    return found
-
-
 def contact_in(text: str) -> list[str]:
-    """FR-12 §3.2.1: contact details, which block a *draft* but do not escalate a ticket."""
+    """FR-12 §3.2.1: contact details, which block a *draft* but do not escalate a ticket.
+
+    The shipped detectors, not a copy: `phones_in` counts digits, because the raw pattern also
+    matches a 16-digit invoice reference (D-51).
+    """
     found = []
     if re.search(EMAIL, text):
         found.append("email")
-    if re.search(PHONE, text):
+    if phones_in(text):
         found.append("phone")
     return found
 
@@ -169,13 +128,8 @@ def phrases(text: str, table) -> list[str]:
 
 
 def markers(text: str) -> list[str]:
-    """FR-12 §3.1.1 / D-24: role labels count only at the start of a line."""
-    low = text.lower()
-    found = [m for m in INJECTION_MARKERS if m not in LINE_ANCHORED and m in low]
-    for label in LINE_ANCHORED:
-        if re.search(rf"(?m)^[\s>]*{re.escape(label)}", low):
-            found.append(label)
-    return [m for m in INJECTION_MARKERS if m in found]
+    """The shipped detector (FR-12 §3.1.1 / D-24), not a copy of it."""
+    return markers_in(text)
 
 
 def spec_table(spec_text: str, line_prefix: str, drop: set[str]) -> set[str]:
