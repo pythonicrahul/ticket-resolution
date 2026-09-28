@@ -914,3 +914,21 @@ whole suite was blind to it.
 3. Should an automated reply carry a greeting? It would mean putting the customer's name back into outbound
    text, which FR-11 keeps out of the model's sight.
 
+## 2026-09-28 · Row 11 follow-up · the author's three answers · FR-11, FR-06
+
+Recorded as D-50. Two behaviour changes and one confirmation:
+
+- **Uncited sentences are now sent** rather than making the draft unusable. `uncited_sentence` is gone as a
+  reason; `no_cited_article` replaces it for a draft that cites nothing at all. The `generation` row's
+  `detail` says when a reply went out carrying an unsourced sentence — this is now the only trace, so row
+  12's grounding guardrail matters more than it did an hour ago.
+- **Replies open with `Hi {first name},`**, inserted by code. The name still never reaches the model.
+  An unusable name field (markup, an address, a newline, over 60 characters) falls back to `Hello,`.
+- The disclosure wording stands; it still wants a human read before a customer sees it.
+
+`uv run pytest -q` → **370 passed** (359 before). `uv run ruff check .` → clean. Six tests added or
+rewritten: T-FR11-4 (now asserts the sentence is sent *and* logged), T-FR11-4b, T-FR06-11, -12, -12b, -13.
+
+Checked against the real model: `DEV-0002` now returns a reply opening `Hi Kavya,` with the same cited body
+and the same three closing lines.
+

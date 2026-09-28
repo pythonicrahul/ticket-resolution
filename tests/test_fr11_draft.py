@@ -7,6 +7,8 @@ replaced. T-FR11-14 replays a reply a real model actually produced (D-47).
 import json
 from pathlib import Path
 
+import pytest
+
 from ticketing_agent.config import Settings
 from ticketing_agent.generate import (
     DISCLOSURE,
@@ -150,14 +152,32 @@ def test_T_FR11_3e_a_chunk_of_a_retrieved_article_that_was_not_itself_retrieved_
     assert result.reason == "invalid_citation"
 
 
-def test_T_FR11_4_a_sentence_with_no_citation_makes_the_draft_unusable(tmp_path):
+def test_T_FR11_4_an_uncited_sentence_is_sent_and_the_log_says_so(tmp_path):
+    """D-50, the author's decision: the reply stays the artefact the model wrote.
+
+    Nothing here checks whether the uncited sentence is true — FR-12's grounding guardrail at
+    row 12 is what stands between it and a customer — so the row has to record that it went out.
+    """
     result = run(tmp_path, [payload(draft_json(sentences=(
         ("Open Billing then Usage breakdown.", ["DOC-BILL-001#2"]),
         ("Your invoice is probably higher because of traffic.", []))))])
 
+    assert result.usable is True
+    assert "because of traffic" in result.reply, "the model's words go out unchanged"
+    assert any("uncited" in note for note in result.notes)
+    assert "uncited" in result.log_fields()["detail"], (
+        "a reader of the log must be able to find the replies that carried one")
+
+
+def test_T_FR11_4b_a_draft_that_cites_nothing_at_all_is_still_refused(tmp_path):
+    """FR-06 §3.3: "names the article(s) it came from" cannot be met by a reply from nothing."""
+    result = run(tmp_path, [payload(draft_json(sentences=(
+        ("Your invoice is probably higher because of traffic.", []),
+        ("Try turning it off and on again.", []))))])
+
     assert result.usable is False
-    assert result.reason == "uncited_sentence"
-    assert "traffic" in result.detail
+    assert result.reason == "no_cited_article"
+    assert result.reply is None
 
 
 def test_T_FR11_5_not_knowing_is_a_correct_outcome(tmp_path):
@@ -336,7 +356,7 @@ def test_T_FR11_13b_an_escalating_row_also_records(tmp_path):
                                                           unknown_reason="not covered"))]),
                 ("invalid_citation", [payload(draft_json(sentences=(
                     ("Refunds take five days.", ["DOC-NOPE-001#1"]),)))]),
-                ("uncited_sentence", [payload(draft_json(sentences=(("No source.", []),)))]),
+                ("no_cited_article", [payload(draft_json(sentences=(("No source.", []),)))]),
                 ("malformed_draft", [payload("nope"), payload("still nope")]),
         ):
             # A cache path per case: the four drafts share a ticket and passages, so one cache
@@ -410,13 +430,50 @@ def test_T_FR06_3_every_reply_says_how_to_reach_a_person(tmp_path):
     assert HUMAN_ROUTE in run(tmp_path, [payload(draft_json())]).reply
 
 
-def test_T_FR06_4_the_three_lines_follow_the_drafted_text_unchanged(tmp_path):
+def test_T_FR06_4_the_lines_sit_around_the_drafted_text_unchanged(tmp_path):
     sentence = "Open Billing then Usage breakdown to see the charge for each service."
     reply = run(tmp_path, [payload(draft_json(sentences=((sentence, ["DOC-BILL-001#2"]),)))]).reply
 
-    assert reply.startswith(sentence), "the model's words come first, verbatim"
-    assert reply.index(sentence) < reply.index("Based on:") < reply.index(DISCLOSURE)
-    assert reply.index(DISCLOSURE) < reply.index(HUMAN_ROUTE)
+    assert reply.startswith("Hi Dana,"), "the greeting is first (D-50)"
+    assert sentence in reply, "the model's words are verbatim"
+    assert reply.index("Hi Dana,") < reply.index(sentence) < reply.index("Based on:")
+    assert reply.index("Based on:") < reply.index(DISCLOSURE) < reply.index(HUMAN_ROUTE)
+
+
+def test_T_FR06_11_a_reply_opens_with_the_customers_first_name(tmp_path):
+
+    named = run(tmp_path, [payload(draft_json())], tkt=ticket(customer_name="Dana Okonkwo"))
+    assert named.reply.startswith("Hi Dana,")
+    assert "Okonkwo" not in named.reply, "the first name only"
+
+
+@pytest.mark.parametrize("name", ["", "   ", None, "x" * 61, "<b>Dana</b>",
+                                  "dana@example.com", "+1 555 0100"])
+def test_T_FR06_12_an_unusable_name_falls_back_rather_than_going_out(tmp_path, name):
+    """A name field holding markup, a newline or an address is a data problem, and "Hello," is
+    always correct. Putting it in front of a customer is not."""
+    from ticketing_agent.generate import GREETING_WITHOUT_NAME
+
+    result = run(tmp_path, [payload(draft_json())], tkt=ticket(customer_name=name))
+    assert result.reply.startswith(GREETING_WITHOUT_NAME)
+    if name and name.strip():
+        assert name.strip() not in result.reply
+
+
+def test_T_FR06_12b_only_the_first_name_is_used_whatever_else_the_field_holds(tmp_path):
+    result = run(tmp_path, [payload(draft_json())],
+                 tkt=ticket(customer_name="Dana\nOkonkwo <dana@example.com>"))
+    assert result.reply.startswith("Hi Dana,")
+    assert "example.com" not in result.reply and "\nOkonkwo" not in result.reply.split("\n")[0]
+
+
+def test_T_FR06_13_the_name_still_never_reaches_the_model(tmp_path):
+    """The greeting is code's; FR-11 §3.2 keeps the name out of the prompt, and that stands."""
+    one, transport = drafter(tmp_path, [payload(draft_json())])
+    result = one.draft(ticket(customer_name="Dana Okonkwo"), PASSAGES)
+
+    assert "Dana" not in json.dumps(transport.requests[0])
+    assert result.reply.startswith("Hi Dana,")
 
 
 def test_T_FR06_5_a_draft_with_no_citation_yields_no_reply(tmp_path):

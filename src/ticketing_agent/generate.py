@@ -44,6 +44,12 @@ HUMAN_ROUTE = (
     "and we will pass it to a support agent."
 )
 SOURCE_PREFIX = "Based on:"
+#: FR-06, the author's decision (D-50): replies open with a greeting. The name is inserted here,
+#: never sent to the model — FR-11 §3.2 keeps it out of the prompt, and that does not change.
+GREETING = "Hi {name},"
+GREETING_WITHOUT_NAME = "Hello,"
+#: A name longer than this is not a name; a reply is not the place to find out what it is.
+MAX_NAME_CHARS = 60
 
 #: Any chunk or article id appearing in the prose. PR-01's rule 2 shows the citation as an inline
 #: bracket (`[DOC-AUTH-001#2]`), so a model that follows the example literally writes the id into
@@ -63,9 +69,8 @@ EXPLANATIONS = {
     "invalid_citation":
         "The drafted reply pointed at an article that was not among the ones found for this "
         "ticket, so it was not sent.",
-    "uncited_sentence":
-        "Part of the drafted reply had nothing in the documentation behind it, so it was not "
-        "sent.",
+    "no_cited_article":
+        "The drafted reply did not point at any documentation, so it was not sent.",
     "empty_draft": "The drafted reply came back empty, so there was nothing to send.",
     "malformed_draft":
         "The drafted reply could not be read back reliably, so a person handles this ticket.",
@@ -179,15 +184,15 @@ class Drafter:
             _log.warning("drafting %s failed: %s", ticket.ticket_id, exc)
             return self._failed("drafting_failed", f"{type(exc).__name__}: {exc}", doc_ids, exc)
 
-        return self._check(structured.value, structured, retrieved, doc_ids)
+        return self._check(ticket, structured.value, structured, retrieved, doc_ids)
 
     # --- internals ------------------------------------------------------------------
 
-    def _check(self, draft: AnswerDraft, structured: Any, retrieved: Sequence[Passage],
-               doc_ids: Sequence[str]) -> DraftResult:
+    def _check(self, ticket: Ticket, draft: AnswerDraft, structured: Any,
+               retrieved: Sequence[Passage], doc_ids: Sequence[str]) -> DraftResult:
         """FR-11 §3.4-§3.7, in order. Each failure refuses the whole draft, never part of it."""
         response = structured.response
-        counters = {
+        counters: dict[str, Any] = {
             "draft": draft,
             "retrieved_doc_ids": tuple(doc_ids),
             # The prompt that was actually loaded, not a module constant: `Drafter(prompt=...)`
@@ -229,27 +234,36 @@ class Drafter:
                 detail=f"cited passages that were not retrieved: {', '.join(sorted(set(off_chunk)))}",
                 **counters)
 
+        # D-50, the author's decision: an uncited sentence is **sent**, not refused and not
+        # dropped — the reply stays the artefact the model wrote. Nothing here checks whether it
+        # is true, so the log records that it went out and FR-12's grounding check (row 12) is
+        # what stands between an unsupported sentence and a customer.
         uncited = draft.uncited_sentences()
         if uncited:
-            return DraftResult(usable=False, reason="uncited_sentence",
-                               detail=f"sentence with no citation: {uncited[0][:200]}", **counters)
+            _log.info("sending a draft with %d uncited sentence(s)", len(uncited))
+            counters["notes"] = (*counters["notes"],
+                                 f"sent with {len(uncited)} uncited sentence(s) (D-50)")
+            # `notes` has no column of its own, and this is the one thing about a *sent* reply
+            # an auditor must be able to find: it went out with something unsourced in it.
+            counters["detail"] = (f"sent with {len(uncited)} uncited sentence(s) (D-50); "
+                                  f"first: {uncited[0][:160]}")
 
         # Second lock. `schemas` already rejects a blank sentence and an answerable draft with
         # no sentences, so this cannot fire today — it is here because the schema is one edit
         # away from allowing it, and an empty reply must never be sendable (FR-11 §3.7).
         if not draft.text.strip():
-            return DraftResult(usable=False, reason="empty_draft",
-                               detail="the draft parsed but had no text", **counters)
+            return _refuse("empty_draft", "the draft parsed but had no text", counters)
 
         articles = _articles(draft.cited_ids, retrieved)
         if not articles:
             # FR-06 §3.3: "names the article(s) it came from" cannot be met by a reply that came
-            # from nothing. Unreachable while the two checks above stand; kept as the second lock.
-            return DraftResult(usable=False, reason="invalid_citation",
-                               detail="no cited passage resolved to an article to name",
-                               **counters)
+            # from nothing. Reachable since D-50 let uncited sentences through: a draft where
+            # *every* sentence is uncited has no article to name, so it is still not sendable.
+            return _refuse("no_cited_article",
+                           f"no sentence cited a passage; {len(uncited)} uncited", counters)
 
-        return DraftResult(usable=True, reply=assemble_reply(draft, articles),
+        return DraftResult(usable=True,
+                           reply=assemble_reply(draft, articles, greeting=greeting_for(ticket)),
                            citations=draft.cited_ids, articles=articles, **counters)
 
     def _failed(self, reason: str, detail: str, doc_ids: Sequence[str],
@@ -315,15 +329,35 @@ class Drafter:
         return "\n".join(lines)
 
 
-def assemble_reply(draft: AnswerDraft, articles: Sequence[tuple[str, str]]) -> str:
-    """FR-06 §2: the drafted sentences, then the sources, the disclosure and the human route.
+def assemble_reply(draft: AnswerDraft, articles: Sequence[tuple[str, str]],
+                   greeting: str = GREETING_WITHOUT_NAME) -> str:
+    """FR-06 §2: a greeting, the drafted sentences, then the sources, disclosure and human route.
 
-    Pure string work over the draft and the passages, so the same draft assembles byte-identically
-    every time (NFR-08). The model's words are used verbatim and nothing is added to them.
+    Pure string work over the draft, the passages and the name, so the same inputs assemble
+    byte-identically every time (NFR-08). The model's words are used verbatim between the
+    greeting and the sources, and nothing is added to them.
     """
     sources = [f"{SOURCE_PREFIX} {title} ({doc_id})" if title else f"{SOURCE_PREFIX} {doc_id}"
                for doc_id, title in articles]
-    return "\n\n".join([draft.text.strip(), *sources, DISCLOSURE, HUMAN_ROUTE])
+    return "\n\n".join([greeting, draft.text.strip(), *sources, DISCLOSURE, HUMAN_ROUTE])
+
+
+def greeting_for(ticket: Ticket) -> str:
+    """FR-06, D-50: "Hi {first name}," when the ticket carries a usable one, "Hello," otherwise.
+
+    The first name only, because the ground-truth replies are informal and a full legal name reads
+    like a form letter. The name comes from the ticket, never from the model, and never goes *to*
+    the model: FR-11 §3.2 keeps it out of the prompt precisely so a draft cannot be steered by it.
+    """
+    raw = (getattr(ticket, "customer_name", "") or "").strip()
+    if not raw or len(raw) > MAX_NAME_CHARS:
+        return GREETING_WITHOUT_NAME
+    first = raw.split()[0].strip(",.;:")
+    # Anything that is not a plain name is not put in front of a customer: a name field holding
+    # markup, a newline or an address is a data problem, and "Hello," is always correct.
+    if not first or not all(ch.isalpha() or ch in "-'’" for ch in first):
+        return GREETING_WITHOUT_NAME
+    return GREETING.format(name=first)
 
 
 def _articles(citations: Sequence[str], passages: Sequence[Passage]) -> tuple[tuple[str, str], ...]:
@@ -335,6 +369,12 @@ def _articles(citations: Sequence[str], passages: Sequence[Passage]) -> tuple[tu
         if passage is not None:
             out.setdefault(passage.doc_id, passage.title.strip())
     return tuple(out.items())
+
+
+def _refuse(reason: str, detail: str, counters: dict[str, Any]) -> DraftResult:
+    """A refusal states its own reason. `detail` may already hold the uncited-sentence note from
+    D-50, and that note describes a reply that was sent — not this one."""
+    return DraftResult(usable=False, reason=reason, **{**counters, "detail": detail})
 
 
 def _fill(line: str, slots: dict[str, str]) -> str:

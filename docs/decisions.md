@@ -726,3 +726,24 @@ Ravi before a customer sees it. There is no greeting and no sign-off, because th
 none — adding "Hi {name}" would reintroduce the customer's name into outbound text, which FR-11 keeps out of
 the model's sight entirely.
 
+## D-50 · The author's three answers on drafting: send uncited sentences, keep the wording, add a greeting (FR-11, FR-06)
+The open questions row 11 raised, answered by the author.
+
+**1. An uncited sentence is sent, not refused and not dropped.** The reply stays the artefact the model
+wrote. This is a deliberate relaxation of what row 11 shipped, and its cost is stated rather than hidden: a
+sentence with nothing behind it can now reach a customer, and **FR-12's grounding guardrail at row 12 is the
+only thing standing in its way**. Two locks remain — a citation that *is* given must still resolve to a
+passage retrieved for this ticket, and a draft citing nothing at all is still refused (`no_cited_article`),
+because FR-06's "names the article(s) it came from" cannot be met by a reply that came from nothing. The
+`generation` row's `detail` records that an uncited sentence went out, so a reviewed sample can go straight
+to the replies that carried one. Revisit if row 12's check lets unsupported sentences through.
+
+**2. The disclosure wording stands** as written at row 11 (`DISCLOSURE_VERSION = "v1"`). It should still be
+read by Marcus or Ravi before a customer sees it; that is a review, not a blocker.
+
+**3. Replies open with a greeting**: `Hi {first name},`, inserted by code from the ticket. **The name still
+never reaches the model** — FR-11 §3.2 keeps it out of the prompt so a draft cannot be steered by it, and
+that does not change. The first name only, because a full legal name reads like a form letter. A name field
+holding markup, an email address, a newline or anything over 60 characters falls back to `Hello,`: a broken
+name field is a data problem, and "Hello," is always correct.
+
