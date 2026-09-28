@@ -807,3 +807,18 @@ wants the `:free` suffix — and `JUDGE_MODEL_NAME` is still the `.env.example` 
 has been made by anything in this repository yet (`storage/llm_cache.sqlite` does not exist), and row 11 is
 the first code that needs one.
 
+## 2026-09-28 · Row 10 signed off by the author · FR-02
+
+**T = 0.85**, the recommended value, with the NFR-06 fairness gap to be declared in the PRD revision (D-44).
+
+- `.env.example`: `CONFIDENCE_THRESHOLD=0.85`, with the reason and the cost in the comment.
+- **`.env` itself is the author's to change** — this session has no permission to read or write it. Until
+  that line is updated the running system still uses 0.80, and the harness prints the value in use, so a gate
+  run shows which one was applied.
+- `docs/decisions.md` D-44 records the choice, the three costs (64.4% answered, 84 answered against label,
+  10.1-point fluency gap) and the two consequences that are not optional: the PRD revision declares the
+  NFR-06 breach, and targeted per-intent floors stay open as the way to buy answer rate back.
+
+Row 10 → `DONE`. Next TODO row whose dependencies are met is **row 11** (B-08 answer drafting with citations,
+FR-11 and FR-06), which is the first code in the system that makes a real model call.
+

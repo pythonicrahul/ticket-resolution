@@ -535,3 +535,27 @@ author has to weigh together, because optimising any one of them alone picks a b
 
 The report chooses nothing and the placeholder stays at 0.80. Whether to accept a 2% must-escalate leak, a
 64% answer rate, or an NFR-06 breach is the author's call at row 10, and the PRD revision should record it.
+
+## D-44 · The author sets T = 0.85, and the NFR-06 breach is declared rather than hidden (FR-02)
+Checkpoint row 10, decided by the author from `evaluation/reports/confidence_sweep.md`.
+
+**0.85 is the lowest T at which no must-escalate ticket is auto-answered on unseen wording.** The ten leaks
+at lower thresholds state 0.7929 to 0.8452 confidence (D-43), so 0.85 clears all of them and 0.80 clears one.
+The PRD's criterion for FR-09 is "zero auto-responses to tickets labelled `must_not_auto_respond` in any run",
+and a security incident answered by a robot is the failure both Marcus and Daniel described in discovery.
+
+**What it costs, on the development set:** 64.4% of tickets answered (35.6% escalated, against the PRD's
+hoped-for reduction), 84 tickets answered although their label says escalate, and — the item that must be
+declared — a **10.1-point gap between fluent and non-fluent answer rates (66.8% vs 56.7%), against NFR-06's
+5-point limit**. Populations are 380 and 120. This is the second threshold in the system whose fairness cost
+rises with its safety (D-35 found the same shape in retrieval), and it is now the binding one.
+
+**Consequences that follow from this choice and are not optional:**
+1. The PRD revision (Stage 5) records the NFR-06 breach, its size, and this trade-off. Declaring it is the
+   condition on which the choice was made.
+2. `evaluation/harness.py` already prints both thresholds in use, so a gate run shows 0.85 rather than a
+   placeholder. The segment tables carry the fluency gap into every metrics report (NFR-06's own measure).
+3. **Targeted floors stay open as the way out.** A higher floor only where a must-escalate intent is among
+   FR-08's alternatives could restore answer rate without reopening the leak. It is unmeasured — the
+   out-of-fold alternatives are not saved — and the author chose the simple threshold first, deliberately.
+
