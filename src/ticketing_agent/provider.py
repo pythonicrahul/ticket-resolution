@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -39,6 +40,8 @@ from pydantic import BaseModel
 
 from ticketing_agent.config import Settings
 from ticketing_agent.schemas import SchemaError, parse_into
+
+_log = logging.getLogger(__name__)
 
 Message = dict[str, str]
 T = TypeVar("T", bound=BaseModel)
@@ -209,6 +212,10 @@ class LangChainTransport:
             "choices": [{"message": {"content": text}}],
             "model": metadata.get("model_name") or request["model"],
             "system_fingerprint": metadata.get("system_fingerprint"),
+            # The provider's own token counts, kept because a run's spend should be visible in
+            # the metrics report rather than discovered on a bill (D-55). Integers about the
+            # call, never any part of its content.
+            "usage": _usage_of(reply),
         }
 
     def __repr__(self) -> str:
@@ -217,6 +224,16 @@ class LangChainTransport:
 
 #: Kept as an alias: the spec and the README call this "the real transport".
 HttpTransport = LangChainTransport
+
+
+def _usage_of(reply: Any) -> dict[str, int] | None:
+    """LangChain's `usage_metadata`, as plain integers, or nothing."""
+    usage = getattr(reply, "usage_metadata", None)
+    if not isinstance(usage, dict):
+        return None
+    out = {k: v for k, v in usage.items()
+           if k in ("input_tokens", "output_tokens", "total_tokens") and isinstance(v, int)}
+    return out or None
 
 
 def _map_provider_exception(exc: Exception) -> ProviderFailure:
@@ -468,6 +485,16 @@ class ProviderClient:
                 self.provider_requests += 1
                 payload = self._transport.send(request)
                 text = _usable_text(payload)
+            except RateLimited as exc:
+                # Kept from D-54, and it is a correctness fix rather than throttling: being
+                # rate-limited must not count towards the circuit breaker. An open breaker fails
+                # *fast*, so five 429s used to turn every ticket behind them into an escalation
+                # without a single attempt — 21 of 80 on the 2026-09-28 gate run. The waiting is
+                # the ordinary backoff, honouring `Retry-After` and clamped as T-FR15-24 requires.
+                last = exc
+                if attempts < total:
+                    self._clock.sleep(_backoff_seconds(attempts, exc))
+                continue
             except RETRYABLE as exc:
                 last = exc
                 if self._record_failure():

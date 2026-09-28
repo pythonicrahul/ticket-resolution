@@ -1146,3 +1146,69 @@ the system answers ~29% or ~60% of tickets.
 Row 15 → `HUMAN`. The gate is not signed off: the machinery passes and the quality figures are not yet
 measurable.
 
+## 2026-09-28 · Row 15 · THE GATE, re-run on OpenAI · FR-14 · **awaiting the author**
+
+The author moved the runtime model to OpenAI on a $5 budget (D-55) after two free-tier runs were spoiled by
+throttling, and asked for the self-pacing to be removed. Both done. **The gate now measures the system
+rather than the provider.**
+
+### The run that counts
+
+`uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/`
+with `gpt-4o-mini` drafting and `gpt-4.1-mini` judging → `evaluation/reports/gate-openai-2026-09-28.md`,
+exit code **0**.
+
+| | free tier (Groq) | **OpenAI** |
+|---|---|---|
+| Tickets processed | 80 | **80** |
+| Answered / escalated | 17 / 63 | **33 / 47** |
+| Escalation rate | 78.8% | **58.8%** |
+| `provider_unavailable` | **21** | **0** |
+| Wall time | 27 min | **5 min** |
+| Model calls | 282 | 158 |
+| Median processing per ticket | 15.0 s | **4.4 s** |
+| Reconciliation | holds | **holds** |
+
+**Every ticket got a real attempt.** That is the whole of the difference: the free-tier runs were not
+measurements of this system, they were measurements of a shared quota.
+
+### What the system actually does, now that it can be measured
+
+| outcome | count | share |
+|---|---|---|
+| answered with citations | **33** | 41.3% |
+| blocked by grounding | 25 | 31.3% |
+| must-escalate intent (by rule) | 14 | 17.5% |
+| citation problems (`no_cited_article`, `invalid_citation`) | 7 | 8.8% |
+| documentation had no answer | 1 | 1.3% |
+
+**Grounding is still the biggest lever**: it refused 25 of the 58 drafts that reached it (43%, down from 61%
+on the weaker free-tier model). Whether those 25 are the guardrail being strict or the drafts being
+unsupported is still unread, and it is still the difference between a 41% and a ~70% answer rate.
+
+**Cost**: 165 cached replies account for 113,232 input and 25,624 output tokens — **about $0.03 at list
+prices** for a full 80-ticket run. The $5 budget covers well over a hundred runs, and a re-run over the same
+tickets is free from the cache.
+
+### What changed in the code
+
+- **Removed**, at the author's request: the `_RateLimiter`, both `PROVIDER_*_PER_MINUTE` settings, their
+  `.env.example` entries and the pacing tests. 471 tests still pass.
+- **Kept**, and flagged to the author as a correctness fix rather than throttling: a `RateLimited` reply does
+  not count towards the circuit breaker. An open breaker fails *fast*, so five 429s in a row used to turn
+  every ticket behind them into an escalation without an attempt — that is what cost 21 tickets on Groq.
+- **Kept**: the provider's token counts on the response, so a run's spend is visible rather than discovered.
+
+### What the author decides
+
+1. **Sign the gate off, or not.** The machinery passes on every criterion: 80/80 processed, 80 logged,
+   reconciliation holds, a renamed input file gives identical decisions with zero model calls, the §06
+   rehearsal passes from a clean clone, and the credential scan is clean. The *quality* question is (2).
+2. **Read a sample of the 25 grounding blocks.** This is now the only thing standing between 41% and a
+   materially higher answer rate, and it is a judgement about answer quality that the system cannot make
+   for itself.
+3. **Record NFR-07's amendment in the PRD revision** (D-55), with the three free-tier measurements as its
+   evidence.
+
+Row 15 stays `HUMAN`.
+

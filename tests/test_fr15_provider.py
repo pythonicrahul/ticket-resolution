@@ -392,9 +392,13 @@ def test_T_FR15_24_a_hostile_retry_after_cannot_break_or_stall_the_run(tmp_path,
     transport = FakeTransport([RateLimited("slow down", retry_after=retry_after), reply()])
     clock = Clock()
     provider = client(tmp_path, transport, clock)
-    provider.complete(MESSAGES, prompt_id="PR-01", prompt_version="PR-01 v1.0")
+    response = provider.complete(MESSAGES, prompt_id="PR-01", prompt_version="PR-01 v1.0")
 
-    assert clock.slept and 0.0 <= clock.slept[0] <= MAX_BACKOFF_SECONDS
+    # The property, not the mechanism: the call still succeeds, and no hostile header can make
+    # the run wait longer than one backoff.
+    assert response.text
+    assert 0.0 <= sum(clock.slept) <= MAX_BACKOFF_SECONDS
+    assert len(transport.requests) == 2, "it retried rather than giving up"
 
 
 def test_T_FR15_25_an_unopenable_cache_does_not_stop_the_run(tmp_path):
@@ -564,3 +568,42 @@ def test_T_FR15_35_a_throttle_without_a_structured_body_still_maps_cleanly():
         assert isinstance(mapped, RateLimited)
         assert str(mapped) == "the provider rate-limited this request"
 
+
+
+# --- FR-15: being throttled is not an outage (D-54) ----------------------------------
+
+
+def test_T_FR15_41_being_throttled_does_not_open_the_circuit(tmp_path):
+    """The defect behind the lost gate tickets (D-54). Five 429s opened the breaker, and an open
+    breaker **fails fast** — so the tickets behind it were escalated in seconds without being
+    tried. Throttling is a statement about our pace, not an outage: it makes the run wait.
+    """
+    clock = Clock()
+    throttles = [RateLimited("slow down", retry_after=5) for _ in range(6)]
+    transport = FakeTransport([*throttles, reply("finally")])
+    provider = ProviderClient(settings(tmp_path, llm_max_retries=6), transport=transport,
+                              clock=clock)
+
+    response = provider.complete(MESSAGES, prompt_id="PR-01", prompt_version="PR-01 v1.0")
+
+    assert response.text == "finally", "it waited through the throttling and got its answer"
+    assert len(transport.requests) == 7, "it kept trying rather than giving up at five"
+    assert sum(clock.slept) == 30.0, "five seconds each, as the provider asked"
+    assert provider.consecutive_failures == 0, "a throttle is not a failure of the provider"
+
+
+def test_T_FR15_42_a_throttle_slows_the_next_ticket_instead_of_failing_it(tmp_path):
+    """The run-level property: one ticket being throttled must not turn the next into an
+    escalation. The pause is on the client, so the following call waits and then succeeds."""
+    clock = Clock()
+    transport = FakeTransport([RateLimited("slow down", retry_after=30), reply("first"),
+                               reply("second")])
+    provider = ProviderClient(settings(tmp_path, llm_max_retries=2), transport=transport,
+                              clock=clock)
+
+    provider.complete(MESSAGES, prompt_id="PR-01", prompt_version="PR-01 v1.0")
+    provider.complete([{"role": "user", "content": "a different ticket"}],
+                      prompt_id="PR-01", prompt_version="PR-01 v1.0")
+
+    assert provider.completions == 2, "both tickets were answered, neither escalated"
+    assert provider.failures == 0, "and the breaker was never tripped by the throttling"

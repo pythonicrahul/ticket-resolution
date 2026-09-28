@@ -891,3 +891,74 @@ by accident, and a trap for whoever "fixed" it.
 `super().perform` and so asserted the wrapper's own structure, and a `assert index < len(...)` tautology. The
 new one asks the log, from inside the action, whether the row is already committed.
 
+## D-54 · The system paces itself, because a refused call becomes a wrong escalation (FR-15, NFR-07)
+Decided by the author after the gate run of 2026-09-28: *"maintain how much we have consumed on our 6/min
+limit and throttle API calls — this will make responses slower but we will escalate less, and that's the
+point."*
+
+**What the gate showed.** 282 model calls in 27 minutes is 10.4 a minute against the ~6 that 8000
+tokens/minute allows. Groq throttled the account, the circuit breaker opened after five consecutive
+failures, and because an open breaker **fails fast**, the last 21 of 80 tickets were consumed in seconds and
+escalated as `provider_unavailable`. Every one of them was a ticket the system might have answered. The
+breaker did its job — it stopped hammering a provider that was refusing us — but the run "completed" by not
+trying, and a reader of `metrics.md` would have seen a 78.8% escalation rate that was mostly an availability
+artefact.
+
+**The fix is to spend the budget at the rate it is granted.** `_RateLimiter` keeps a sliding 60-second
+window of requests and tokens and waits before a call that would exceed either. Settings
+`PROVIDER_TOKENS_PER_MINUTE` and `PROVIDER_REQUESTS_PER_MINUTE`, both 0 (off) by default so nothing changes
+for a caller that has not configured them; `.env.example` sets them to Groq's published free-tier limits.
+
+Four properties worth stating, because each is a way this could have been done wrong:
+
+1. **Tokens bind, not requests.** Groq gives 1000 requests a day and 8000 tokens a minute, so pacing on
+   request count alone would still be throttled (D-47). Both are tracked; either can be left at 0.
+2. **A cache hit costs nothing.** The reservation happens inside the attempt loop, which a replayed reply
+   never reaches — so a re-run over the same tickets is still nearly free (NFR-07).
+3. **The estimate is corrected by the provider's own count** when it reports one, and **only upwards**. The
+   transport now keeps `usage` — integers about the call, never any part of its content. Pacing too slowly
+   is a delay; pacing too fast is an escalation.
+4. **It cannot stall a run.** Any single wait is capped at the window, and a call larger than the entire
+   budget is sent rather than waited on forever — the provider's own 429 and the breaker are still behind
+   this.
+
+**The cost is time, and that is the trade the author made.** An 80-ticket unattended run gets slower; the
+alternative was a quarter of the run escalating without being tried. NFR-07 forbids spending money to go
+faster, so waiting is the only lever there is.
+
+## D-55 · NFR-07 is amended: the runtime model may be a paid one, within a stated budget (NFR-07)
+Decided by the author, 2026-09-28, after two gate runs were spoiled by free-tier throttling:
+*"this is not making sense anymore, let's use the OpenAI API key, I have $5 there."*
+
+**What the requirement said.** NFR-07: no spend; CLAUDE.md repeats it as a non-negotiable — *"Runtime model
+is a free tier only (`MODEL_NAME` in `.env`)"*. This decision changes that, and the PRD revision has to
+record it rather than let it drift, because the assessment gate checks the claim.
+
+**Why.** Two full runs and a smoke investigation went on the free tier. The evidence:
+
+| attempt | result |
+|---|---|
+| OpenRouter free endpoints (D-46) | 20 consecutive attempts refused, `upstream_provider_shared_pool`; unusable |
+| Groq free tier, unpaced (D-54) | 80 tickets, **21 escalated without being tried** |
+| Groq free tier, paced + throttle-aware | stopped at 65 tickets, **8 escalated without being tried** |
+
+Client-side pacing and treating a throttle as pacing rather than as an outage both helped and neither was
+enough. The remaining cost is not engineering time well spent: the system's quality cannot be measured while
+a quarter of the sample never reaches a model.
+
+**What changes, and what does not.**
+- `LLM_BASE_URL` and `MODEL_NAME` move to OpenAI. **No code changes**: the provider client is
+  OpenAI-compatible and has never known which host it talks to (D-47 made the same point when Groq replaced
+  OpenRouter).
+- The rate limiter stays and is switched off by setting both budgets to 0. It remains the answer for any
+  future free tier, and D-54's finding — that throttling must not open the circuit breaker — is a
+  correctness fix that has nothing to do with who is paying.
+- **The budget is $5 and the run is the only thing spending it.** A full 80-ticket run is roughly 250 calls;
+  the metrics report now carries an estimated cost so a run's spend is visible in the report rather than on
+  a bill, and the response cache means a re-run over the same tickets costs nothing.
+
+**What the PRD revision must say.** NFR-07 becomes a *budget* rather than a prohibition: the system must run
+within a stated spend, the spend must be reported, and the free-tier path must remain available (the
+`--stub-pipeline` flag and the rate limiter both survive). The three measurements above are the evidence for
+the change, and they belong in the revision beside it.
+
