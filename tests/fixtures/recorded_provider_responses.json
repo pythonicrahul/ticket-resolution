@@ -1,28 +1,38 @@
 {
-  "recorded_from": "qwen/qwen3.8-27b:free",
+  "recorded_from": "openai/gpt-oss-120b",
   "why": "Real replies from the configured free-tier model, captured by scripts/provider_smoke.py. Row 11's tests replay the `response` values through FakeTransport so they need no network and no key.",
   "exchanges": [
     {
       "request": {
-        "model": "qwen/qwen3.8-27b:free",
+        "model": "openai/gpt-oss-120b",
         "messages": [
           {
             "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
+            "content": "Reply with one short sentence."
           },
           {
             "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
+            "content": "Say that the connection works."
           }
         ],
         "temperature": 0,
         "max_tokens": 400
       },
-      "error": "RateLimited: the provider rate-limited this request"
+      "response": {
+        "choices": [
+          {
+            "message": {
+              "content": "The connection works."
+            }
+          }
+        ],
+        "model": "openai/gpt-oss-120b",
+        "system_fingerprint": "fp_8655ddce88"
+      }
     },
     {
       "request": {
-        "model": "qwen/qwen3.8-27b:free",
+        "model": "openai/gpt-oss-120b",
         "messages": [
           {
             "role": "system",
@@ -36,331 +46,17 @@
         "temperature": 0,
         "max_tokens": 400
       },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
+      "response": {
+        "choices": [
           {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
+            "message": {
+              "content": "{\n  \"answerable\": true,\n  \"sentences\": [\n    {\n      \"text\": \"Open Billing → Usage breakdown to see the charge for each service for the period.\",\n      \"citations\": [\"DOC-BILL-001#2\"]\n    }\n  ],\n  \"unknown_reason\": \"\"\n}"
+            }
           }
         ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
-    },
-    {
-      "request": {
-        "model": "qwen/qwen3.8-27b:free",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You answer customer support questions for a cloud platform using only the passages given. Cite the passage id for every sentence. If the passages do not answer the question, say so."
-          },
-          {
-            "role": "user",
-            "content": "Answer the question using only the passage. Reply with JSON only, no other text, in this shape: {\"answerable\": true, \"sentences\": [{\"text\": \"...\", \"citations\": [\"DOC-BILL-001#2\"]}], \"unknown_reason\": \"\"}. If the passage does not answer the question, use {\"answerable\": false, \"sentences\": [], \"unknown_reason\": \"why\"}.\n\nPassage:\nDOC-BILL-001#2 (Invoices and usage breakdown → Resolution): Open Billing → Usage breakdown to see the charge for each service for the period. The breakdown is generated nightly.\n\n<ticket>\nWhere can I see the breakdown of my invoice by service?\n</ticket>"
-          }
-        ],
-        "temperature": 0,
-        "max_tokens": 400
-      },
-      "error": "RateLimited: the provider rate-limited this request"
+        "model": "openai/gpt-oss-120b",
+        "system_fingerprint": "fp_e1a78f200e"
+      }
     },
     {
       "request": {
@@ -374,7 +70,7 @@
         "temperature": 0,
         "max_tokens": 400
       },
-      "error": "ProviderError: the provider rejected the request with status 400"
+      "error": "ProviderError: the provider rejected the request with status 404"
     }
   ]
 }

@@ -629,3 +629,38 @@ shape.
 Row 11 is not blocked by any of this: CLAUDE.md requires its tests to pass with no network and no key, so it
 is built against `FakeTransport` either way. The decision is needed before row 15's gate run.
 
+## D-47 · Groq, not OpenRouter, and the models are the account's own (NFR-07, FR-15, FR-11)
+The author moved `LLM_BASE_URL` to Groq after D-46. Everything below was measured, not remembered.
+
+**The switch works, and it fixes the failure mode.** OpenRouter's free endpoints share one pool across all
+free users; Groq's free tier gives **per-account** limits — 1000 requests/day per model and 8000 tokens/minute
+— so the `upstream_provider_shared_pool` rejection that made a gate run impossible does not arise. No code
+changed: the provider client is OpenAI-compatible and never knew which host it was talking to.
+
+**The model ids had to change, and could not be guessed.** `vendor/model:free` is OpenRouter syntax; it does
+not exist on Groq. The account's live catalogue has 11 active models, and `llama-3.3-70b-versatile` — which
+Groq's own documentation page lists — is **not** among them, so the catalogue is account-specific and the
+docs are not a substitute for reading it.
+
+**Chosen:** `MODEL_NAME=openai/gpt-oss-120b`, `JUDGE_MODEL_NAME=qwen/qwen3.8-27b` (a different vendor, because
+FR-12's grounding check is not independent if the judge is the model being judged). `openai/gpt-oss-20b` is
+the fallback: it passes every check too, and since both models share the same 8000 tokens/minute budget the
+larger one costs nothing extra.
+
+**`complete_structured` is verified against a real model at last.** Both gpt-oss models returned a valid
+`AnswerDraft` **on the first attempt, with no repair**, citing `DOC-BILL-001#2` correctly — the row-11
+dependency that D-46 could not test. The replies are recorded in
+`tests/fixtures/recorded_provider_responses.json`, so row 11's tests replay a real model's JSON while still
+running with no network and no key.
+
+**The binding limit is tokens, not requests.** 8000 tokens/minute against a drafting call of roughly 1300
+tokens is about six calls a minute, so a gate run over 80 validation tickets (~100 calls at T = 0.85) takes
+15 to 20 minutes and must pace itself. A harness that bursts will collect 429s and escalate good tickets as
+`provider_unavailable` — correct behaviour producing a meaningless gate result. Row 14's wiring has to allow
+for it, and row 15 should expect a run measured in tens of minutes.
+
+**Noted, not adopted:** the account also serves `meta-llama/llama-prompt-guard-2-86m`, a prompt-injection
+classifier that looks directly relevant to FR-12's `instruction_integrity` check. It is not adopted, and the
+reason is not quality: a guardrail that needs the provider stops working during an outage, and CLAUDE.md
+requires guardrails to run on every reply. Pattern matching (D-24) keeps working when the model does not.
+

@@ -848,3 +848,24 @@ Not a backlog row: a smoke check run before row 11 builds on `complete_structure
 
 **Result**: `uv run pytest -q` → **313 passed**. `uv run ruff check .` → clean.
 
+## 2026-09-28 · Provider moved to Groq, and `complete_structured` verified · FR-15, FR-11, NFR-07
+
+The author switched `LLM_BASE_URL` to Groq after D-46. **No code changed** — the client is OpenAI-compatible
+and never knew the host — but every model id did: `vendor/model:free` is OpenRouter syntax and does not exist
+on Groq, and the account's live catalogue (11 active models) does not include `llama-3.3-70b-versatile`,
+which Groq's own docs page lists.
+
+`scripts/provider_smoke.py --model openai/gpt-oss-120b` → **4/4 checks pass**, and so does gpt-oss-20b:
+
+- plain completion 1.7 s, `attempts=1`, `model_version='fp_5082008e34'`;
+- the identical call replayed from cache with 0 provider requests;
+- **`complete_structured` → `AnswerDraft` on the first attempt, no repair, citing `DOC-BILL-001#2`** — the
+  row-11 dependency D-46 could not test. Recorded to `tests/fixtures/recorded_provider_responses.json`;
+- a nonexistent id → typed `ProviderError` 404, no retry storm.
+
+Measured limits: **1000 requests/day per model, 8000 tokens/minute**. The tokens are the binding constraint —
+roughly six drafting calls a minute, so a gate run is 15-20 minutes and must pace itself rather than burst
+(D-47). `.env.example` carries the ids, the reasons and that warning.
+
+Nothing in the repository is blocked now. Row 11 (B-08 answer drafting, FR-11 and FR-06) is next.
+
