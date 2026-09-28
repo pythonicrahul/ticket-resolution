@@ -973,3 +973,48 @@ and its exact-quote check are exercised with no network and no key.
 2. `check_error` is now distinct from `provider_unavailable` in the log. Both escalate; only the reason
    differs, and the metrics report should probably count them separately at row 14.
 
+## 2026-09-28 · Row 13 · Escalation handover package · FR-01 (supports FR-05, FR-15)
+
+**Files changed**
+- `docs/specs/FR-01.md` (new, written before the code).
+- `src/ticketing_agent/handover.py`: `HandoverWriter`, `Handover`, the `UNCERTAINTY` table, the PR-02 call
+  and the template fallback. Was a one-line placeholder.
+- `src/ticketing_agent/generate.py`: `_fill` becomes `fill_slots`, shared with the handover.
+- `tests/test_fr01_handover.py` (new, 24 tests). `docs/decisions.md` D-52.
+
+**Result**: `uv run pytest -q` → **441 passed** (432 at first green, 417 before this row).
+`uv run ruff check .` → clean. PR-02 runs through `FakeTransport`, so the real prompt, the parsing and the
+template fallback are exercised with no network and no key.
+
+**Checked against the real model** (not part of the suite): `DEV-0015`, a former employee still holding
+access, escalated as `must_escalate_intent`. PR-02 produced a usable summary, goal and first check — and an
+uncertainty sentence containing the reason code, which is what D-52's first rule now prevents.
+
+**Independent review** (reviewer subagent, fresh session, PR-08 v1.0): 17 findings — 1 severe, 2 high,
+6 medium, 8 low. The severe one and both highs are fixed, along with every medium; D-52 has the detail.
+
+- **Severe:** the withholding rules read `ticket.text` (capped at 8000 characters by FR-07) while the prompt
+  sent the raw `subject` and `body`. A secret or an injection marker past the cap was invisible to the check
+  and transmitted — and cached on disk. Handovers always meet truncated tickets, since `text_truncated` is
+  an escalation reason, so this was the common case rather than a corner.
+- **High:** a card number in a ticket *subject* was copied verbatim into the decision log by the template,
+  and the spec claimed a scrub that FR-13 had explicitly declined to build.
+- **High:** the log row claimed `FR-05` without carrying an urgency, and omitted the intent, confidence and
+  retrieved articles the PRD names as part of the package.
+
+**Not fixed, on purpose**
+- `generate.py` renders the raw subject and body too, the same mismatch as the severe finding. It is not
+  reachable today — routing escalates any over-cap ticket with `text_truncated` before the drafter runs — so
+  the fix belongs with row 14's wiring, where the guarantee becomes structural rather than incidental.
+- FR-13 still does not scrub `summary`. The template now masks secrets itself; whether an ordinary name or
+  address may sit in an internal log is FR-13 §7's open question for the author.
+- The note is written before the terminal row exists, because the row needs the summary. A process death
+  between the two leaves an escalation with no row; `Reconciliation.missing` catches it after the fact.
+  Structurally enforcing "log before the action" here is row 14's.
+
+**Open questions for the human**
+1. `already_tried` is the field PR-02 is most likely to invent. Nothing detects a fabricated step; the
+   20-ticket review the prompt describes is the only honest check, and it is yours to run.
+2. The template note is terse by design — it records what was known rather than reading well. If you want it
+   to read like prose, that is a second prompt, not a longer template.
+

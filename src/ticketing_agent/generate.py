@@ -299,13 +299,13 @@ class Drafter:
                 # returned — a way to put unsourced words in front of the model (row-11 review).
                 filled.update({"chunk_id", "title", "text"})
                 lines.extend(
-                    _fill(line, {"{chunk_id}": _attribute(p.chunk_id),
+                    fill_slots(line, {"{chunk_id}": _attribute(p.chunk_id),
                                  "{title}": _attribute(p.title),
                                  "{text}": _as_data(p.text)})
                     for p in passages)
             elif "{channel}" in line:
                 filled.add("channel")
-                lines.append(_fill(line, {"{channel}": _attribute(ticket.channel)}))
+                lines.append(fill_slots(line, {"{channel}": _attribute(ticket.channel)}))
             elif stripped == "{subject}":
                 filled.add("subject")
                 lines.append(_as_data(ticket.subject))
@@ -377,8 +377,12 @@ def _refuse(reason: str, detail: str, counters: dict[str, Any]) -> DraftResult:
     return DraftResult(usable=False, reason=reason, **{**counters, "detail": detail})
 
 
-def _fill(line: str, slots: dict[str, str]) -> str:
-    """Substitute every placeholder in one pass, so a filled value cannot be re-substituted."""
+def fill_slots(line: str, slots: dict[str, str]) -> str:
+    """Substitute every placeholder in one pass, so a filled value cannot be re-substituted.
+
+    Shared with `handover.py`: chained `.replace` calls let an earlier value expand a later
+    placeholder — a subject of literally `{body}` rendered the body twice and lost the subject.
+    """
     out, index = [], 0
     pattern = re.compile("|".join(re.escape(k) for k in slots))
     for match in pattern.finditer(line):

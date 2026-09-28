@@ -800,3 +800,44 @@ into a pass; no matched private value reaches any detail, report or log row; the
 against the union of retrieved passages (D-22), and uncited sentences are checked (D-50); verdict indices
 fail safe in every direction; and `guardrails.py` is now genuinely the only copy of every table.
 
+## D-52 · The handover: what the model may not write, and what it may not be shown (FR-01)
+Row 13. FR-01's criterion is coverage — *100% of escalated tickets carry a non-empty summary and
+uncertainty reason* — so every failure path in `handover.py` ends in a note rather than an exception, and
+the template is the guaranteed path rather than a degraded one. The discovery line this answers is the one
+nobody said out loud: **all 108 repeat contacts in the supplied data are on escalated tickets.**
+
+**The uncertainty is code's sentence, never the model's.** Found by running PR-02 against the real model on
+`DEV-0015`: the note came back well written except for the field that matters most, which read *"the system
+flagged the intent as a security incident but required escalation (must_escalate_intent)"*. That is the
+reason code echoed back into the sentence a human reads, and the PRD asks for "a plain statement". The
+system knows exactly why it escalated; the model can only guess. It still writes the summary, the goal, what
+was tried and where to start — PR-02 keeps asking for the uncertainty because writing it holds the model's
+attention on the escalation reason.
+
+**The severe finding: the check and the payload read different strings.** `_withhold` tested `ticket.text`,
+which FR-07 caps at 8000 characters, while the prompt renders the raw `subject` and `body`. So a secret or an
+injection marker **past the cap** was invisible to the check and transmitted anyway — and written to the
+response cache on disk. A handover is the one component that always meets truncated tickets, because
+`text_truncated` is itself an escalation reason, so this was not a corner case. Both rules now test every
+string the prompt can carry. The two tests that covered them used short bodies and saw nothing.
+
+**A secret in a ticket subject reached the decision log.** FR-13 truncates `summary` but deliberately does
+not scrub it (FR-13 §7 leaves that to the author), and the template interpolated the raw subject. PR-02's
+rule 5 — *"if you see anything that looks like a password, key or token, write `[secret present in ticket]`
+instead"* — is now applied by code on the template path, where no model is there to apply it. An ordinary
+name or address in a summary is still stored: that is the author's open question, not a defect.
+
+**Also fixed:** the row now carries the intent, urgency, confidence and retrieved articles the PRD names,
+and claims `FR-05` only when an urgency actually reaches it; the row names the prompt that was sent rather
+than a module constant; the prompt is loaded on first use, so a missing file degrades every note to the
+template instead of aborting the run at construction; a template that stops wrapping the ticket in
+`<ticket>` is refused, because the slot guard could not see customer text being concatenated into the
+instruction block; slots are filled in one pass, so a subject of literally `{body}` cannot expand into it;
+and `_first_sentence` no longer reads "Dr." as a whole sentence.
+
+**Tests that were passing for the wrong reason:** the injection case passed both because of the text and
+because of an injected reason, so either half could be deleted; the "100%" test skipped the three entries in
+`malformed_tickets.json` that are not objects at all — the ones the corpus exists for — passed
+`allow_model=False` so it never exercised the withholding rules, and asserted `seen >= 25` while iterating
+45. It now iterates every `*_tickets.json`, asserts per file, and counts the tickets actually withheld.
+
