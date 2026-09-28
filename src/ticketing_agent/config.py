@@ -46,6 +46,7 @@ class Settings:
 
     # Classification and routing (FR-08, FR-02)
     training_tickets_path: Path | None = None  # TRAINING_TICKETS_PATH
+    classifier_path: Path = Path("./storage/classifier.joblib")
     confidence_threshold: float = 0.80
 
     # Decision log (FR-13) and the kill switch (FR-16)
@@ -58,7 +59,7 @@ class Settings:
         # Paths may arrive as strings from the environment or from a test, and a relative one
         # would make the cache (and so determinism, NFR-08) depend on the working directory.
         for name in ("llm_cache_path", "chroma_path", "docs_path", "training_tickets_path",
-                     "decision_log_path", "kill_switch_file"):
+                     "decision_log_path", "kill_switch_file", "classifier_path"):
             value = getattr(self, name)
             if value is None:
                 continue
@@ -142,6 +143,7 @@ def load_settings(env_file: str | Path | None = ".env") -> Settings:
         retrieval_top_k=_whole_number("RETRIEVAL_TOP_K", Settings.retrieval_top_k),
         relevance_threshold=_number("RELEVANCE_THRESHOLD", Settings.relevance_threshold),
         training_tickets_path=_optional_path("TRAINING_TICKETS_PATH"),
+        classifier_path=Path(os.environ.get("CLASSIFIER_PATH", Settings.classifier_path)),
         confidence_threshold=_number("CONFIDENCE_THRESHOLD", Settings.confidence_threshold),
         decision_log_path=Path(os.environ.get("DECISION_LOG_PATH", Settings.decision_log_path)),
         kill_switch_file=Path(os.environ.get("KILL_SWITCH_FILE", Settings.kill_switch_file)),

@@ -415,3 +415,67 @@ rate is FR-02's confidence threshold and FR-12's grounding check doing their job
 later stages must catch them: grounding has to fail on a draft built from irrelevant passages, and the
 confidence threshold has to escalate a weak classification. If those do not hold at rows 9 and 12, the fix is
 to strengthen them, not to raise this number.
+
+## D-39 · Cross-validation folds are grouped by wording cluster, because this dataset repeats itself (FR-08)
+The 500 development tickets hold only **215 distinct bodies**, which collapse into about **96 clusters** once
+near-identical wordings are merged, and every repeated body carries the same intent. Row-wise
+cross-validation therefore trains and tests on the same words, and the score measures near-duplicate lookup
+rather than classification.
+
+Measured with the real embedder, the same model and the same data:
+
+| folds | intent accuracy |
+|---|---|
+| row-wise | 99.6% |
+| grouped by exact body | 94.0% |
+| grouped by wording cluster | **88.6%** |
+
+The headline is the last one. Grouping by exact body was the first fix and it was not enough: 168 of the 215
+distinct bodies have another *distinct* body with the same intent above 0.85 character similarity ("a restore
+we started last Friday…" against "a restore we started yesterday morning…"), so exact-body folds still test
+on a paraphrase of something they trained on. Clusters are built by union-find over that similarity, and the
+row-wise figure is kept beside the grouped one so the size of the leak stays visible in the report.
+
+Two consequences worth stating. First, **99.6% was never a real number** and reporting it would have claimed
+NFR-03 was comfortably beaten. Second, the fold count printed beside "grouped" must be the count actually
+used — a class with four distinct wordings cannot be split five ways — because printing the requested count
+misdescribes the measurement.
+
+## D-40 · The stated confidence is calibrated on its own, and logistic rather than isotonic (FR-08, NFR-03)
+NFR-03 asks that *stated confidence* be within 5 points of observed accuracy. That is a claim about the one
+number the system reports, not about the whole probability distribution, and per-class sigmoid calibration
+over 22 classes does not deliver it: it left the classifier stating 72% while being right 100% of the time, a
+30-point gap in the direction that matters, because a 0.80 threshold would then escalate work the system gets
+right every time.
+
+So a one-dimensional fit maps the model's top probability onto observed correctness. **Logistic, not
+isotonic**: isotonic's flat regions emit *exactly* 1.0, and on this data that meant 488 of 500 tickets stating
+certainty from a 94%-accurate classifier, with four distinct confidence values in total — nothing for FR-02 to
+threshold on. The logistic fit gives 213 distinct values and never saturates.
+
+Two mistakes were made and fixed on the way, both of which produced flattering numbers:
+
+* The calibrator was first **scored on the predictions it was fitted on**, reporting a 0.0-point gap. The
+  table is now cross-fitted: each half scored by a calibrator fitted only on the other, split by wording.
+* The estimator that produced the measured probabilities was **not the estimator that ships** — a different
+  inner calibration CV shifted the top-probability distribution by 7.5 points, so the calibrator was fitted to
+  a distribution the shipped model does not produce. Both now come from one factory, pinned by T-FR08-15.
+
+Where it lands: the band holding 475 of 500 predictions is within **2.3 points**; one band of exactly 25
+predictions is 42.6 points out. The report states both. Whether that is acceptable is the author's call at
+checkpoint row 10.
+
+## D-41 · Urgency has a ceiling of 73% and `low` is effectively unreachable (FR-05)
+The urgency classifier reaches 48.4% on wording it has not seen. Before reading that as a failure: **67
+ticket bodies in the development set carry more than one urgency label**, so no model that sees only the text
+can exceed **73.0%**. The gap between 48% and 73% is the model's; the gap between 73% and 100% is the
+labelling's, and the Stage 1 notes already said urgency was labelled inconsistently.
+
+Within that, `low` is effectively unreachable — 0.8% recall across 128 tickets, even with class weighting —
+because its embedding centroid sits 0.960 cosine from `medium`. `high` is separable (0.854 from `low`) and is
+the level that matters for the queue. **FR-05's three levels are in practice two**, and the escalation queue
+should be read that way: it orders correctly, it just cannot often tell low from medium.
+
+This is reported rather than fixed. Options if the author wants better: rules for urgency instead of a
+classifier, merging low and medium into one level, or relabelling. All three are decisions about the product,
+not the code.

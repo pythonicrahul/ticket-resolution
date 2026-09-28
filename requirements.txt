@@ -118,7 +118,9 @@ iniconfig==2.3.0
 jiter==0.17.0
     # via openai
 joblib==1.6.0
-    # via scikit-learn
+    # via
+    #   scikit-learn
+    #   ticketing-agent
 jsonpatch==1.33
     # via langchain-core
 jsonpointer==3.1.1
@@ -132,6 +134,7 @@ kubernetes==36.0.3
 langchain-core==1.6.5
     # via
     #   langchain-openai
+    #   langchain-text-splitters
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
@@ -142,6 +145,8 @@ langchain-protocol==0.0.19
     # via
     #   langchain-core
     #   langgraph-sdk
+langchain-text-splitters==1.1.2
+    # via ticketing-agent
 langgraph==1.2.12
     # via ticketing-agent
 langgraph-checkpoint==4.2.0

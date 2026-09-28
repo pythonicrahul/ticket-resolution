@@ -589,3 +589,65 @@ must not be raised to chase it (D-38), and to what 0.25 accepts: 135 of 143 unan
 still retrieve something, which rows 9 and 12 have to catch.
 
 Row 7 → DONE. Next: row 8, the intent and urgency classifier with its calibration table.
+
+## 2026-09-28 · Row 8 · B-06 Intent and urgency classifier · FR-08, FR-05
+
+**Files changed**
+- `docs/specs/FR-08.md` (new, covers FR-05 too): the model and why, grouped folds, calibration, the reason
+  FR-05 asks for, 26 acceptance tests, 6 open questions.
+- `src/ticketing_agent/classify.py`: `train`, `TrainedClassifier`, `IntentClassifier`, `Classification`,
+  `calibration_table`, `order_escalation_queue`, near-duplicate clustering, the confidence calibrator.
+- `src/ticketing_agent/config.py`: `CLASSIFIER_PATH`; `.env.example` documents it.
+- `scripts/train_classifier.py` (new) → `evaluation/reports/classifier_calibration.md`.
+- `tests/test_fr08_classify.py` (new): 33 tests. `docs/decisions.md` D-39 … D-41.
+- `pyproject.toml`: `joblib`.
+
+**Result**: `uv run pytest -q` → 250 passed (240 at first green, 217 before this row).
+`uv run ruff check .` → clean. Tests inject a hashing embedder, so none needs the model or the network.
+
+**The measured figures** (real embedder, development set only, cluster-grouped folds):
+
+| | value | note |
+|---|---|---|
+| Intent accuracy | **88.6%** | 99.6% row-wise, 94.0% exact-body-grouped |
+| Intent classes below 85% precision | 3 of 22 | NFR-03's strict per-class reading is not met |
+| Urgency accuracy | **48.4%** | against a **73.0% ceiling** set by the labelling |
+| Calibration, dominant band | **2.3 points** over 475 of 500 predictions | one thin 25-prediction band is 42.6 |
+
+**Three measurement errors were found and fixed, every one of which produced a flattering number.**
+1. **The dataset leaks.** 500 tickets hold 215 distinct bodies — 96 wording clusters — and every repeated body
+   carries one intent. Row-wise cross-validation scores a near-duplicate lookup: 99.6%. Grouped by cluster it
+   is 88.6% (D-39). The review caught that my first fix, grouping by *exact* body, was still not enough,
+   because 168 of 215 bodies have a same-intent paraphrase elsewhere.
+2. **The confidence was degenerate.** Isotonic calibration on 0/1 targets emitted exactly 1.0 for 488 of 500
+   tickets — four distinct values in total, a certainty claim from a 94% classifier, and nothing for FR-02 to
+   threshold on. A one-dimensional logistic fit gives 213 distinct values and never saturates (D-40).
+3. **The report described a model nobody runs.** The out-of-fold estimator lacked the shipped urgency model's
+   class weighting, and then — after that was fixed — still used a different inner calibration CV, which
+   shifted the top-probability distribution by 7.5 points. Both now come from one factory, pinned by T-FR08-15.
+
+I also nearly shipped the in-sample mistake I had just diagnosed: the first calibration table scored the
+calibrator on its own fit and read 0.0 points. It is now cross-fitted, and T-FR08-18 fails if a gap of exactly
+zero ever reappears.
+
+**Independent review** (reviewer subagent, PR-08 v1.0): 17 findings — 1 severe, 6 high, 10 medium/low. All the
+severe and high ones are fixed: the degenerate confidence, the estimator mismatch, the near-duplicate leak,
+the fold count printed beside "grouped" being the row-wise one, spec/code drift on isotonic, the report's
+missing verdicts, and the `verify=False` flag that could switch off the embedder-mismatch guard (now removed —
+CLAUDE.md forbids a switch that turns a check off, and with it off a broken embedder became a run of
+`unclear_request` that looks like a result). Mediums fixed: alternatives documented as raw rather than
+calibrated, a silent calibration failure now logs, the report states what it measured, an unrecognised urgency
+is treated as `medium` rather than sorted below `low`, timestamps compare as times, evidence no longer cites
+the ticket itself, and there are now tests for load failures and for the confidence distribution.
+
+**Not fixed, on purpose**
+- The model's fingerprint is not checked against the training corpus on load, so a model trained on a
+  superseded file would still be served if the embedder matches. Recorded for row 14's wiring.
+- FR-08's criterion says per-class precision and recall appear "in the metrics report"; they are in
+  `classifier_calibration.md`. Row 14 carries them into the harness report.
+- Urgency is left as a classifier rather than rules. That is a product decision (D-41).
+
+**Open questions for the human** (FR-08 §7)
+1. Three intents miss NFR-03's 85% per-class precision. Accept, merge the rare classes, or add rules?
+2. NFR-03's calibration target holds for 475 of 500 predictions and fails in one 25-prediction band. Acceptable?
+3. FR-05's three urgency levels are in practice two. Accept, merge low and medium, or relabel?
