@@ -234,7 +234,7 @@ def _map_provider_exception(exc: Exception) -> ProviderFailure:
     if name in {"APITimeoutError", "Timeout", "APIConnectionError", "ConnectionError"}:
         return ProviderTimeout(f"could not reach the provider in time ({name})")
     if name == "RateLimitError" or status == 429:
-        return RateLimited("the provider rate-limited this request",
+        return RateLimited(f"the provider rate-limited this request{_throttle_source(exc)}",
                            retry_after=_retry_after(exc))
     if status in (400, 401, 402, 403, 404, 422):
         # 404 is a retired or mistyped model id and 402 is an exhausted allowance: retrying
@@ -625,6 +625,35 @@ def _cache_key(request: dict[str, Any], *, prompt_id: str, prompt_version: str,
     }
     canonical = json.dumps(material, sort_keys=True, ensure_ascii=True, default=str)
     return hashlib.sha256(canonical.encode("utf-8", errors="surrogatepass")).hexdigest()
+
+
+#: The only fields read out of a 429 body. Both are short provider-side identifiers; neither can
+#: contain the request, which is why the rest of the body is still dropped unread (NFR-04).
+THROTTLE_FIELDS = ("limit_source", "provider_name")
+
+
+def _throttle_source(exc: Exception) -> str:
+    """Why we were throttled, when the provider says so in a structured field.
+
+    Measured against the real provider: a saturated free endpoint answers 429 with
+    `limit_source: upstream_provider_shared_pool` and **no `Retry-After`**, while an exhausted
+    account quota is a different `limit_source` entirely. The two need opposite responses — wait,
+    versus stop and fix the account — and "the provider rate-limited this request" cannot tell
+    them apart, which is what a decision log reading `provider_unavailable` inherited.
+
+    Only the fields in `THROTTLE_FIELDS` are read. The body's free text is left alone: a 4xx body
+    can echo the request, and no part of a ticket may reach a log (NFR-04).
+    """
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return ""
+    error = body.get("error")
+    metadata = error.get("metadata") if isinstance(error, dict) else None
+    if not isinstance(metadata, dict):
+        return ""
+    found = [f"{field}={metadata[field]}" for field in THROTTLE_FIELDS
+             if isinstance(metadata.get(field), str | int | float)]
+    return f" ({', '.join(found)})" if found else ""
 
 
 def _retry_after(exc: Exception) -> float | None:

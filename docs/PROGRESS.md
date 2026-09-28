@@ -822,3 +822,29 @@ the first code that needs one.
 Row 10 → `DONE`. Next TODO row whose dependencies are met is **row 11** (B-08 answer drafting with citations,
 FR-11 and FR-06), which is the first code in the system that makes a real model call.
 
+## 2026-09-28 · First real provider calls (`scripts/provider_smoke.py`) · FR-15, NFR-07
+
+Not a backlog row: a smoke check run before row 11 builds on `complete_structured`. Full findings in D-46.
+
+| check | result |
+|---|---|
+| plain completion | **pass** — reply returned, `attempts=2` (the retry was needed on the first ever real call) |
+| identical call replayed from cache | **pass** — `cached=True`, 0 provider requests, cache survives across processes |
+| `complete_structured` → `AnswerDraft` | **unverified** — 20 live attempts over 4 minutes, all 429 before a model saw the prompt |
+| nonexistent model id | **pass** — typed `ProviderError` 400, no retry storm |
+
+- `MODEL_NAME=google/gemma-4-31b-it:free` answers **nothing**; `qwen/qwen3.8-27b:free` answered once. The
+  429s are `limit_source: upstream_provider_shared_pool` with `usage: 0` on the account, so this is the free
+  pool being saturated, not our quota — and $10 of credits would not change it (D-45's 50/day is a different
+  limit).
+- **Fixed:** `RateLimited` now names `limit_source` and `provider_name`, so the decision log can tell a busy
+  pool from an exhausted allowance. The body's free text is still dropped unread (NFR-04); T-FR15-34 plants a
+  secret in it and fails if it leaks.
+- **Added:** `scripts/provider_smoke.py` (`--model`, `--patient`, catalogue check, recording to
+  `tests/fixtures/recorded_provider_responses.json`, and a refusal to run on a paid endpoint with no
+  override).
+- **Decision needed before row 15**: Groq (recommended), bring-your-own-key on OpenRouter, or batch the gate
+  run. Row 11 proceeds either way — its tests use `FakeTransport`, as CLAUDE.md requires.
+
+**Result**: `uv run pytest -q` → **313 passed**. `uv run ruff check .` → clean.
+

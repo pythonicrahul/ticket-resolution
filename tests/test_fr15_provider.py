@@ -526,3 +526,41 @@ def test_T_FR15_33_an_unknown_sdk_exception_is_still_typed():
     mapped = _map_provider_exception(RuntimeError("something new in the SDK"))
     assert isinstance(mapped, ProviderFailure)
     assert "something new" not in str(mapped), "a provider message may echo the request"
+
+
+def test_T_FR15_34_a_throttle_says_where_the_limit_came_from_without_echoing_the_request():
+    """Measured against the real provider (D-46): a saturated free endpoint and an exhausted
+    account quota are both 429, need opposite responses, and were indistinguishable in the log.
+
+    Only the structured fields are read. The body's free text may quote the request, so it stays
+    unread — NFR-04 is not traded for a better error message.
+    """
+    from ticketing_agent.provider import _map_provider_exception
+
+    class SDKError(Exception):
+        status_code = 429
+        body: ClassVar[dict] = {"error": {"code": 429, "metadata": {
+            "provider_name": "ModelRun",
+            "limit_source": "upstream_provider_shared_pool",
+            "raw": "rate-limited upstream. CUSTOMER-SECRET-12345 was in the prompt",
+            "remedy_hint": "Retry shortly",
+        }}}
+
+    mapped = _map_provider_exception(SDKError("throttled"))
+    assert isinstance(mapped, RateLimited)
+    assert "upstream_provider_shared_pool" in str(mapped)
+    assert "ModelRun" in str(mapped)
+    assert "CUSTOMER-SECRET-12345" not in str(mapped), "the free text is never read"
+    assert "Retry shortly" not in str(mapped), "only the whitelisted fields"
+    assert mapped.retry_after is None, "this provider sends no Retry-After for a shared-pool 429"
+
+
+def test_T_FR15_35_a_throttle_without_a_structured_body_still_maps_cleanly():
+    from ticketing_agent.provider import _map_provider_exception
+
+    for body in (None, "just a string", {}, {"error": "flat"}, {"error": {"metadata": None}}):
+        exc = type("SDKError", (Exception,), {"status_code": 429, "body": body})("throttled")
+        mapped = _map_provider_exception(exc)
+        assert isinstance(mapped, RateLimited)
+        assert str(mapped) == "the provider rate-limited this request"
+

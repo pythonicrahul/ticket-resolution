@@ -584,3 +584,48 @@ the response cache (which makes re-runs nearly free but does nothing for the fir
 account for this, and `scripts/provider_smoke.py` now warns when a configured id has left the free roster
 rather than retrying a 404 three times.
 
+## D-46 · The first real provider calls: what the fakes could not have told us (FR-15, NFR-07)
+`scripts/provider_smoke.py`, run 2026-09-28 against the configured free models. Everything in
+`provider.py` had been tested against `FakeTransport` only, so this was the first time the system talked to a
+model at all. Four checks; three passed, and the failures were the useful part.
+
+**What works.** A plain completion returns (`'The connection works.'`) and needed `attempts=2` — FR-15's
+retry earned its keep on the very first real call. The response cache replays an identical call with zero
+provider requests and survives across processes, so NFR-08's determinism plumbing is real and not a
+fake-transport artefact. A nonexistent model id comes back as a typed `ProviderError` at status 400 with no
+retry storm: a configuration mistake is not treated as an outage.
+
+**`google/gemma-4-31b-it:free` is unusable and `qwen/qwen3.8-27b:free` is intermittent.** Chosen on paper for
+its structured-output support (D-45), gemma answered 429 to every single request. Qwen answered once, then
+also began refusing. The cause is not our account: `GET /api/v1/key` reports `is_free_tier: true`,
+`usage: 0`, `limit_remaining: 5`, and the 429 body says **`limit_source: upstream_provider_shared_pool`** with
+no `Retry-After`. The free endpoints route through a pool shared by every free user, and at this time of day
+it rejects nearly everything: 20 consecutive live attempts over four minutes, spaced 45 seconds apart, all
+throttled. **Buying credits would not fix this** — the $10 tier raises OpenRouter's own 50/day cap (D-45),
+and this limit is upstream of that.
+
+**So `complete_structured` into `AnswerDraft` is still unverified**, and it is the one thing row 11 is built
+on. That is a gap in what we know, not a defect we have found: no request reached a model.
+
+**One defect was found and fixed.** Every 429 became the same sentence, "the provider rate-limited this
+request", because `_map_provider_exception` drops the provider's body — deliberately, since a 4xx body can
+echo the request (NFR-04). But a decision log reading `provider_unavailable` then cannot distinguish a busy
+shared pool (wait) from an exhausted account allowance (stop and fix the account), and those need opposite
+responses. `RateLimited` now carries `limit_source` and `provider_name` — two short provider-side
+identifiers that cannot contain a ticket — while the body's free text stays unread. T-FR15-34 plants a secret
+in the body's `raw` field and fails if it ever reaches the message; T-FR15-35 covers bodies of every other
+shape.
+
+**Where this leaves the runtime model.** Three ways forward, none of which costs money, and the author picks:
+1. **Groq** (`LLM_BASE_URL=https://api.groq.com/openai/v1`, already documented in `.env.example`): a real free
+   tier with per-account limits rather than a shared pool — `llama-3.3-70b-versatile` and
+   `openai/gpt-oss-20b` are the candidates. This is the recommendation: the failure mode we hit is
+   specifically *shared-pool* saturation, and a per-account limit does not have it.
+2. **Bring your own key to OpenRouter** (Settings → Integrations): free models then run against your own
+   upstream allowance, which is what the 429's own `remedy_hint` suggests.
+3. **Accept it and batch**: the cache makes re-runs nearly free, so a gate run could be assembled over
+   several sittings. Honest, but it makes row 15's "unattended run" claim awkward.
+
+Row 11 is not blocked by any of this: CLAUDE.md requires its tests to pass with no network and no key, so it
+is built against `FakeTransport` either way. The decision is needed before row 15's gate run.
+

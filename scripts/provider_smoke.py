@@ -36,7 +36,10 @@ from ticketing_agent.provider import (
     MalformedModelOutput,
     ProviderClient,
     ProviderFailure,
+    _BreakerState,
 )
+
+_CLOSED = _BreakerState.CLOSED
 from ticketing_agent.schemas import AnswerDraft
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,10 +67,19 @@ def main() -> int:
                              "harness run's cache")
     parser.add_argument("--recording", default=str(DEFAULT_RECORDING))
     parser.add_argument("--max-tokens", type=int, default=400)
+    parser.add_argument("--patient", type=int, default=0, metavar="SECONDS",
+                        help="when a check fails because the free pool is saturated, wait this "
+                             "long and try again (up to 5 times). OpenRouter sends no Retry-After "
+                             "for a shared-pool 429, so the client's own backoff gives up in ~6s.")
+    parser.add_argument("--model", default=None,
+                        help="try a different free id than MODEL_NAME, for when a free endpoint "
+                             "is busy. The :free guard applies to this too.")
     args = parser.parse_args()
 
     configured = load_settings()
-    model = configured.model_name.strip()
+    model = (args.model or configured.model_name).strip()
+    if args.model:
+        configured = Settings(**{**configured.__dict__, "model_name": model})
     if not model:
         print("REFUSING: MODEL_NAME is not set. There is no default in code (NFR-07).")
         return 1
@@ -88,10 +100,10 @@ def main() -> int:
     print(f"model {model} at {settings.llm_base_url}, cache {_relative(Path(args.cache))}\n")
 
     results = [
-        _plain(client, args.max_tokens),
-        _cached(client, args.max_tokens),
-        _structured(client, args.max_tokens),
-        _failure(client, args.max_tokens),
+        _patiently(_plain, client, args),
+        _patiently(_cached, client, args),
+        _patiently(_structured, client, args),
+        _patiently(_failure, client, args),
     ]
 
     ok = all(result for result in results)
@@ -101,6 +113,28 @@ def main() -> int:
     print(f"provider requests: {client.provider_requests}, cache hits: {client.cache_hits}, "
           f"failures: {client.failures}")
     return 0 if ok else 1
+
+
+def _patiently(check, client: ProviderClient, args) -> bool:
+    """Run one check, retrying a saturated free pool at the pace it actually needs.
+
+    A shared-pool 429 arrives with no `Retry-After`, so `ProviderClient`'s deterministic backoff
+    exhausts itself in about six seconds — correct for an outage (A11 wants a fast, logged
+    escalation) and useless for a busy free endpoint. The waiting belongs here, in a development
+    script, and not in the client, where a long sleep would stall a harness run.
+    """
+    import time
+
+    for attempt in range(1, max(1, 5 if args.patient else 1) + 1):
+        client._state = _CLOSED  # a fresh check should not inherit the last one's open circuit
+        client.consecutive_failures = 0
+        if check(client, args.max_tokens):
+            return True
+        if not args.patient or attempt == 5:
+            return False
+        print(f"   retrying in {args.patient}s (attempt {attempt + 1} of 5)")
+        time.sleep(args.patient)
+    return False
 
 
 def _plain(client: ProviderClient, max_tokens: int) -> bool:
