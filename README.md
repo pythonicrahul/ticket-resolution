@@ -3,6 +3,8 @@
 A support system for CloudServe Solutions (Forward Deployed AI Engineering capstone). It answers tickets from CloudServe's own documentation when it can defend the answer, with citations, and escalates to a person, with a summary and the relevant articles attached, when it cannot. Every decision is logged.
 
 > Status: built through the backlog in `docs/BACKLOG.md`. Requirements are in `docs/PRD.md`, one spec per requirement in `docs/specs/`, and every non-obvious choice in `docs/decisions.md`.
+>
+> **Start here for how it works:** [`docs/Implementation.md`](docs/Implementation.md) — the full technical account, with a diagram and a captured request/response for every API use case. Rendered as a single page in [`docs/Implementation.html`](docs/Implementation.html).
 
 ## Setup (from a clean checkout)
 

@@ -277,8 +277,16 @@ class _State:
         return self._pipeline
 
     def attach(self, log: DecisionLog) -> None:
-        """Give the graph the log, so a guardrail block is recorded here too (FR-13 §3.1)."""
-        attach = getattr(self._pipeline, "attach_log", None)
+        """Give the graph the log, so a guardrail block is recorded here too (FR-13 §3.1).
+
+        Reads `self.pipeline`, the property, not the `_pipeline` attribute. The attribute is
+        `None` until the first request builds the graph, so the private read attached the log to
+        nothing on the very first ticket — and because the built graph is then cached, it stayed
+        attached to nothing for the life of the process. Measured through a running server: five
+        tickets produced five rows, with the `generation` and `block` rows the harness writes for
+        the same tickets missing entirely.
+        """
+        attach = getattr(self.pipeline, "attach_log", None)
         if callable(attach):
             attach(log)
 

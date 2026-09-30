@@ -10,3 +10,6 @@ evaluation/results/*
 !evaluation/results/.gitkeep
 .DS_Store
 logs/
+
+# archify working directories; the published copies live in docs/diagrams/
+.archify/

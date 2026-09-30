@@ -242,6 +242,48 @@ def test_a_block_inside_the_pipeline_is_recorded_for_an_api_ticket_too(tmp_path,
     assert decisions.index("block") < decisions.index("escalate"), "and it came first"
 
 
+def test_the_log_reaches_a_lazily_built_pipeline_on_the_very_first_ticket(tmp_path, retriever):
+    """The previous test injects a pipeline, so `_State._pipeline` is already set and the bug
+    hides. A real deployment builds the graph on the first request: the log must reach *that*
+    graph, on that request, or FR-12 §5's "the block is recorded" is lost for the process."""
+    from ticketing_agent.logging_store import DecisionEntry, DecisionLog
+
+    built: list[str] = []
+
+    class Lazy(FakePipeline):
+        def __init__(self):
+            super().__init__()
+            self.log = None
+            built.append("built")
+
+        def attach_log(self, log):
+            self.log = log
+
+        def process(self, ticket):
+            assert self.log is not None, "the graph was built after the log was attached"
+            self.log.perform(DecisionEntry(
+                ticket_id=ticket.ticket_id, stage="generation", decision="continue",
+                requirement_ids=["FR-11"], prompt_version="PR-01 v1.0", model_calls=1),
+                lambda: None)
+            return super().process(ticket)
+
+    import ticketing_agent.api as module
+
+    app = module.build_app(settings(tmp_path), retriever=retriever, pipeline=None)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(module, "_build_pipeline", lambda *a, **k: Lazy())
+        response = TestClient(app).post("/tickets", json={
+            "ticket_id": "LAZY-1", "channel": "email", "subject": "Question",
+            "body": "Where do I find the usage breakdown?",
+            "received_at": "2026-05-01T09:00:00Z"})
+
+    assert response.status_code == 200
+    assert built == ["built"], "the graph was built exactly once, by this request"
+    with DecisionLog(settings(tmp_path).decision_log_path) as log:
+        stages = [r["stage"] for r in log.rows()]
+    assert "generation" in stages, "the row the graph wrote as it went was lost"
+
+
 def test_a_ticket_that_cannot_be_read_is_a_400_not_a_crash(tmp_path, retriever):
     response = client(tmp_path, retriever).post("/tickets", json={"channel": "email"})
     assert response.status_code in (400, 422)

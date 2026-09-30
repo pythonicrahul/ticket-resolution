@@ -1031,3 +1031,66 @@ is the right answer rate for CloudServe is a business judgement that needs the 1
 of a sample of sent replies — which is exactly what NFR-03's "human review of ≥50 responses by two
 assessors" asks for and what this project has never had.
 
+
+## D-58 · The lazily-built graph made the FR-04 log fix look fixed when it was not (FR-04, FR-13)
+
+`docs/PROGRESS.md` already records the first half of this: the API attached the decision log **after**
+processing a ticket, so the rows the graph writes as it goes — above all the guardrail `block` row
+FR-12 §5 requires — were never written for a ticket submitted through `POST /tickets`, while the same
+ticket through the harness recorded them. Moving `state.attach(log)` above `state.pipeline.process(...)`
+fixed the ordering, and the test went green.
+
+It was still broken. `attach` read the private attribute:
+
+```python
+attach = getattr(self._pipeline, "attach_log", None)   # wrong
+```
+
+`_pipeline` is `None` until the first request builds the graph. `pipeline` is the property that builds
+it. So on the very first ticket the log was attached to `None`, and because the built graph is then
+cached for the life of the process, it stayed attached to nothing for every ticket after that. The
+reordering was correct and did nothing.
+
+The test did not catch it because the test constructs the app with a pipeline already supplied — which
+is the right thing for every other test in that file and exactly the wrong thing for this one. The
+regression test now monkeypatches `module._build_pipeline`, so the graph really is built lazily on the
+first request, and then asserts a `generation` stage row exists:
+
+```
+test_the_log_reaches_a_lazily_built_pipeline_on_the_very_first_ticket
+```
+
+Mutating `self.pipeline` back to `self._pipeline` fails it. The fix is one word; the lesson is that a
+lazily-initialised attribute and its property are two different objects, and a test that never
+exercises the lazy path cannot tell them apart. Found by submitting five tickets to a running server
+and counting rows — the same way every other defect in the last three sessions was found.
+
+## D-59 · `docs/Implementation.md` is the technical account, and the HTML is generated from it (docs)
+
+The PRD says what the system must do; the specs say how each requirement was to be built; `decisions.md`
+says why. None of them says *how the thing actually works end to end*, and a reader arriving at this
+repository had no single document that walked the runtime.
+
+`docs/Implementation.md` is that document: the architecture, the data model, each of the seven graph
+nodes, the RAG subsystem, the five guardrails, the provider client, the decision log, then seventeen use
+cases — every API endpoint and every failure mode — each with a diagram and **a verbatim request and
+response captured from a running server**, not an illustration. It closes with the mapping from each
+measured problem of CloudServe's human-only process to the mechanism that addresses it, and a glossary
+of every abbreviation used.
+
+Two rules about it:
+
+* **The HTML is generated, never edited.** `scripts/render_implementation_html.py` embeds the markdown in
+  a single self-contained page and renders the mermaid blocks in the browser. Editing
+  `docs/Implementation.html` by hand would put the two out of step on the next regeneration, which is the
+  ordinary way a generated artifact becomes the source of truth by accident.
+* **The three archify diagrams are copied into `docs/diagrams/`**, and `.archify/` is git-ignored. A
+  working directory full of candidate JSON and rejected layouts is not a deliverable; the three standalone
+  HTML files are.
+
+Verified before committing: all 11 mermaid diagrams parse under the same mermaid version the page pins
+(10.9.1); all 34 in-page anchors resolve under GitHub's slug algorithm, which the page's own sidebar
+deliberately reimplements so the `#uc-4--the-answered-path` style links work identically in the markdown
+on GitHub and in the rendered page; all three diagram links point at files that exist. The page itself has
+**not** been opened in a browser — the Chrome extension was not connected in this session — so its
+appearance is unverified in the same way the compose stack's first `up` is.

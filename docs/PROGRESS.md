@@ -1385,3 +1385,42 @@ treated as a test, not a formality.
 
 `uv run pytest -q` → **504 passed**. `uv run ruff check .` → clean.
 
+
+---
+
+## Documentation pass — `Implementation.md`, and the FR-04 fix that was not fixed
+
+Two things happened in this session, and the second is the one worth reading.
+
+**The lifecycle diagram.** The third archify diagram — ten states across a `main` / `withheld` /
+`terminal` lane split, thirteen transitions — failed validation four times on layout constraints: a
+sublabel needing 135px in a 132px state, and three transition labels overlapping the states on either
+side. The fix was not to widen anything. Adjacent states in a lane leave almost no room for a label, and
+the plain main-path transitions (`received → understood`, `understood → routed`) carry no information the
+step order does not already carry. Dropping those two labels and shortening the rest passed all four
+gates. `docs/diagrams/lifecycle-ticket-outcomes.html`.
+
+**The FR-04 log fix was still broken after being fixed.** See D-58. The short version: the reordering of
+`state.attach(log)` was correct, the test was green, and the log was still being attached to `None` on
+every request, because `attach` read `self._pipeline` (the attribute, which is `None` until the graph is
+built) instead of `self.pipeline` (the property that builds it). Caught by running five tickets through a
+live server and counting rows: five rows for five tickets, with the `generation` and `block` rows missing
+entirely. The regression test now forces the lazy path with a monkeypatch; mutating the fix back fails it.
+
+That is the third session running in which the defect that mattered was found by *running the thing*, not
+by the suite — and the second in which a fix I had already written and tested turned out not to be a fix.
+
+**`docs/Implementation.md`** (≈1730 lines) is the technical account the repository did not have: runtime
+architecture, the data model, all seven graph nodes, the RAG subsystem end to end, the five guardrails
+including both quote-matcher defects, the provider client, the decision log, then seventeen use cases —
+every API endpoint and every failure mode — each with a mermaid diagram and a verbatim request/response
+captured from a running server. Then the mapping from each of the twenty-two measured problems of the
+human-only process to the mechanism that addresses it, the measured results with every shortfall stated
+(FCR 52.5% against a ≥60% target; five NFR-06 fairness breaches), and a glossary of every abbreviation.
+
+`docs/Implementation.html` is generated from it by `scripts/render_implementation_html.py`. Checked before
+committing: 11 of 11 mermaid diagrams parse under the pinned mermaid 10.9.1, 34 of 34 in-page anchors
+resolve, 3 of 3 diagram links exist. Not checked: how the page looks — the Chrome extension was not
+connected, so the rendering is unverified in exactly the way the compose stack's first `up` is.
+
+`uv run pytest -q` → **505 passed**. `uv run ruff check .` → clean.
