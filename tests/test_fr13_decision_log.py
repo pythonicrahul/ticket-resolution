@@ -555,3 +555,47 @@ def test_T_FR13_31_sources_used_carries_scores(log):
     assert row["sources_used"] == [["DOC-API-001", 0.62], ["DOC-API-002", 0.31]]
     assert row["retrieved_doc_ids"] == ["DOC-API-001", "DOC-API-002"]
     assert governance_record(row)["sources_used"][0] == {"doc_id": "DOC-API-001", "score": 0.62}
+
+
+def test_T_R2_10_a_database_written_by_an_older_schema_is_migrated_not_broken(tmp_path):
+    """R2: `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists.
+
+    Without a migration, every insert into a v1 database fails on the unknown column — and
+    under D-27 a decision log that cannot be written stops the run. So the ten databases in
+    `storage/` from earlier gate runs would each have turned the next run into an exit 1.
+    """
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    with DecisionLog(path, run_id="v1") as log:
+        log.record(DecisionEntry(ticket_id="OLD-1", stage="routing", decision="escalate",
+                                 reason="must_escalate_intent", explanation="To a person.",
+                                 requirement_ids=["FR-09"]))
+
+    # Put the database back into its v1 shape, which is what is on disk in storage/.
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE decisions DROP COLUMN urgency_reason")
+    connection.commit()
+    connection.close()
+
+    with DecisionLog(path, run_id="v2") as log:
+        log.record(DecisionEntry(ticket_id="NEW-1", stage="routing", decision="escalate",
+                                 reason="must_escalate_intent", explanation="To a person.",
+                                 requirement_ids=["FR-09"], urgency="high",
+                                 urgency_reason="closest to DEV-0007"))
+        rows = {row["ticket_id"]: row for row in log.rows()}
+
+    assert rows["OLD-1"]["urgency_reason"] is None, "an old row keeps what it was logged with"
+    assert rows["NEW-1"]["urgency_reason"] == "closest to DEV-0007"
+
+
+def test_T_R2_11_migrating_twice_is_not_an_error(tmp_path):
+    """The class promises it is safe to open the same path twice."""
+    path = tmp_path / "twice.db"
+    with DecisionLog(path, run_id="a"), DecisionLog(path, run_id="b"):
+        pass
+    with DecisionLog(path, run_id="c") as log:
+        log.record(DecisionEntry(ticket_id="T-1", stage="routing", decision="escalate",
+                                 reason="no_retrieval", explanation="To a person.",
+                                 requirement_ids=["FR-10"], urgency_reason="closest to DEV-1"))
+        assert log.rows()[0]["urgency_reason"] == "closest to DEV-1"

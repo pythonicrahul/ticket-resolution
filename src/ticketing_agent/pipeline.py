@@ -57,6 +57,15 @@ class Outcome:
     prediction_value: str | None = None
     prediction_confidence: float | None = None
     threshold_applied: float | None = None
+    # R2: what the classifier decided, on the row it decided about. These were empty on every
+    # row of every recorded run because `to_entry` never passed them, which quietly turned
+    # FR-05's urgency-first queue into an oldest-first one — `/queue` sorts on the log.
+    intent: str | None = None
+    intent_confidence: float | None = None
+    intent_alternatives: tuple[tuple[str, float], ...] = ()
+    urgency: str | None = None
+    urgency_confidence: float | None = None
+    urgency_reason: str | None = None
     summary: str | None = None
     uncertainty: str | None = None
     detail: str | None = None
@@ -89,6 +98,12 @@ class Outcome:
             prediction_value=self.prediction_value,
             prediction_confidence=self.prediction_confidence,
             threshold_applied=self.threshold_applied,
+            intent=self.intent,
+            intent_confidence=self.intent_confidence,
+            intent_alternatives=self.intent_alternatives,
+            urgency=self.urgency,
+            urgency_confidence=self.urgency_confidence,
+            urgency_reason=self.urgency_reason,
             sources_used=tuple(p.as_source() for p in self.passages),
             citations=self.citations,
             guardrail_results=self.guardrail_results,
@@ -410,7 +425,8 @@ class SupportPipeline:
                                          state.handover)
         if decision is None:
             reason, detail = state.failure or ("pipeline_error", "the graph produced no decision")
-            return _failed_outcome(state.ticket, reason, detail, note)
+            return _failed_outcome(state.ticket, reason, detail, note,
+                                   classification=state.classification)
 
         answered, reason, detail, all_reasons, stage = _terminal_reason(state)
 
@@ -439,6 +455,7 @@ class SupportPipeline:
             prediction_value=(state.classification.intent
                               if state.classification is not None else None),
             prediction_confidence=decision.confidence,
+            **_classification_fields(state.classification),
             threshold_applied=decision.threshold_applied,
             summary=note.summary if note is not None else None,
             uncertainty=note.system_uncertainty if note is not None else None,
@@ -470,7 +487,13 @@ class SupportPipeline:
             return
         entry = DecisionEntry(
             ticket_id=state.ticket.ticket_id, source_index=state.ticket.source_index,
-            **fields, **state.ticket.log_fields_for_log())
+            # R2: the classifier's columns first, so a caller that owns one of them still wins.
+            # `governance_record` unpacks `alternatives` next to `prediction`, so the prediction
+            # goes on too — a populated alternatives list beside a null prediction reads as
+            # "alternatives to nothing" in the projection an assessor is given.
+            **{**_classification_fields(state.classification),
+               **_prediction_fields(state), **fields},
+            **state.ticket.log_fields_for_log())
         try:
             self._log.perform(entry, lambda: None)
         except InvalidDecision:
@@ -483,11 +506,46 @@ class SupportPipeline:
         # log the one failure that stops the run rather than escalating one ticket.
 
 
+def _classification_fields(classification: Any) -> dict[str, Any]:
+    """R2: the classifier's five columns, or nothing when it never produced any.
+
+    An absent classification is not a reason to leave the columns off the *other* rows, so this
+    returns the empty mapping rather than a row of `None`s: the dataclass defaults already say
+    "not classified", and a caller that splats this cannot accidentally blank them.
+    """
+    if classification is None:
+        return {}
+    # `SupportPipeline` types its classifier `Any`, and before R2 the graph read only three
+    # attributes off whatever came back. A classification object without `row_fields` used to
+    # work; making it raise would turn a *successfully drafted* ticket into a `pipeline_error`
+    # escalation, because the AttributeError escapes `_record` into `process`'s broad except.
+    fields = getattr(classification, "row_fields", None)
+    return fields() if callable(fields) else {}
+
+
+def _prediction_fields(state: Any) -> dict[str, Any]:
+    """The Governance `prediction` block: the intent, and the confidence routing compared.
+
+    Not the classifier's raw number: FR-02 §3.2 floors an unusable one to 0.0, and a row must
+    state what the decision actually used (`route.py`). The raw value is on the same row as
+    `intent_confidence`, and the two differing is the diagnosis of a broken classifier.
+    """
+    classification, decision = state.classification, state.decision
+    if classification is None:
+        return {}
+    fields: dict[str, Any] = {"prediction_value": classification.intent}
+    if decision is not None:
+        fields["prediction_confidence"] = decision.confidence
+    return fields
+
+
 def _failed_outcome(ticket: Ticket, reason: str, detail: str, note: Any,
-                    model_calls: int = 0, cache_hits: int = 0) -> Outcome:
+                    model_calls: int = 0, cache_hits: int = 0,
+                    classification: Any = None) -> Outcome:
     return Outcome(
         ticket=ticket, decision="escalate", reason=reason,
         model_calls=model_calls, cache_hits=cache_hits,
+        **_classification_fields(classification),
         explanation="Something went wrong while handling this ticket, so it goes to a person.",
         all_reasons=(reason,), stage="pipeline", detail=detail,
         summary=note.summary if note is not None else f"{ticket.channel} ticket {ticket.ticket_id}"

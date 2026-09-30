@@ -607,7 +607,8 @@ reason. The package is:
 | `summary` | PR-02 on a redacted ticket | "The customer is requesting a refund for overage charges…" |
 | `intent` + `confidence` | classifier | `quota_or_overage`, 0.9393 |
 | `urgency` + `urgency_confidence` | classifier | present when the model produced one |
-| `urgency_reason` | routing + guardrails | `money_commitment_requested: matched triggers: refund` |
+| `urgency_reason` | classifier (FR-08 §3.4) | `closest to DEV-0011 (high, 0.72)` |
+| `detail` | routing + guardrails | `money_commitment_requested: matched triggers: refund` |
 | retrieved articles | retriever | chunk ids + scores, on the log row |
 | draft, if one was written | PR-01 | withheld text is logged, never sent |
 | `uncertainty` | routing explanation or guardrail detail | "The customer is asking for money back … which only a person can promise." |
@@ -1194,14 +1195,19 @@ GET /queue?limit=5
 
 Ordered by **urgency, then age** (FR-05) — `order_escalation_queue` over the escalation rows
 of the decision log, so the queue is derived from the audit trail rather than kept separately.
-`urgency_reason` in the response is the log row's `detail` field, which is where routing and the
-guardrails record *what* fired. Every row carries a summary — that is FR-01's
-acceptance criterion measured directly: 100% of escalations carry a non-empty summary and
-uncertainty reason.
+Every row carries a summary: that is FR-01's acceptance criterion measured directly, 100% of
+escalations carrying a non-empty summary and uncertainty reason.
 
-`urgency: null` here is honest reporting, not a bug: these tickets escalated on a rule
-before the urgency model produced a confident label, and the field is left null rather than
-filled with a guess. See D-41 on urgency's measured ceiling.
+> **This capture predates review row R2, and two things in it are now different.** When it was
+> taken, the log's `urgency` column was empty on **every row ever written**, because
+> `Outcome.to_entry()` never passed it — so this queue is in fact ordered oldest-first, and
+> `urgency: null` above is that defect, not an honest report of an unconfident classifier. R2
+> carries the classifier's `intent`, `intent_confidence`, `intent_alternatives`, `urgency`,
+> `urgency_confidence` and `urgency_reason` onto every row, including the intermediate ones.
+> Second, the `urgency_reason` shown above is the log row's `detail` — the *escalation* detail,
+> which answers a different question from "why is this urgent?". It is now served under `detail`,
+> and `urgency_reason` carries the classifier's own evidence: its nearest labelled training
+> tickets (FR-08 §3.4). D-41's measured urgency ceiling of 73% is the separate, real limitation.
 
 ---
 
@@ -1423,7 +1429,7 @@ Each row is a problem with a number attached, and the mechanism that addresses i
 | 6 | Agents **clean up after wrong automated answers** (the fear that blocked automation) | Sofia | Five guardrails that can only block; grounding verified sentence by sentence against exact quotes | FR-12, NFR-04 | 16 of 80 drafts blocked; **0** unresolvable citations |
 | 7 | Escalations arrive as a **raw forwarded ticket**; the agent re-asks the customer | Daniel (tier 2) | Every escalation carries a handover package | FR-01 | 100% of escalations carry summary + uncertainty (UC-11) |
 | 8 | **49% of escalations were answerable from the docs** | Daniel | Retrieval runs *before* routing, so an escalation carries the articles even when it escalates | FR-10, FR-01 | retrieved chunk ids are on every escalation row |
-| 9 | **108 repeat contacts, all on escalated tickets** | Daniel, Ravi | The uncertainty statement tells the agent what the system could not establish, so the agent asks once | FR-01 | `urgency_reason` names the exact failing sentences (UC-5) |
+| 9 | **108 repeat contacts, all on escalated tickets** | Daniel, Ravi | The uncertainty statement tells the agent what the system could not establish, so the agent asks once | FR-01 | the queue's `detail` names the exact failing sentences (UC-5) |
 | 10 | Refunds and credits risk being promised by automation | Daniel | 25 money + 13 date triggers, matched on text independently of classification, rank 6–7 | FR-03 | UC-7; matched on a misclassified ticket (`quota_or_overage`) |
 | 11 | Head of support reports a **red response-time number** with no analysis | Marcus | Metrics report per run: volume, outcomes, technical, governance, five segment tables | FR-14 | `evaluation/results/*/metrics.md` |
 | 12 | **Has never analysed the ticket mix** | Marcus | Per-class precision/recall across all 22 intents, with support counts | FR-08 | classification table, n=80 |

@@ -432,3 +432,85 @@ def test_the_grafana_dashboard_names_panels_that_the_scrape_provides():
 
     assert used, "the dashboard queries nothing"
     assert used <= exported, f"panels query metrics nobody exports: {sorted(used - exported)}"
+
+
+# --- R2: the queue orders on urgency the pipeline actually produced --------------------
+
+
+def _real_pipeline(tmp_path, retriever, urgencies):
+    """The real graph over fake edges, with a classifier that varies urgency by ticket id.
+
+    `test_T_FR05_the_queue_is_ordered_by_urgency_then_age` writes `urgency` into the log by
+    hand, so it passed throughout the period in which the pipeline never wrote that column.
+    This builds the graph that a request actually runs, so the column has to be filled by the
+    code under test.
+    """
+    import json as _json
+
+    from ticketing_agent.classify import Classification
+    from ticketing_agent.generate import Drafter
+    from ticketing_agent.guardrails import Guardrails, JudgeVerdict
+    from ticketing_agent.handover import HandoverWriter
+    from ticketing_agent.pipeline import SupportPipeline
+    from ticketing_agent.provider import FakeTransport, ProviderClient
+    from ticketing_agent.route import Router
+
+    class VaryingClassifier:
+        def classify(self, ticket):
+            return Classification(
+                intent="security_incident", intent_confidence=0.93,
+                intent_alternatives=(("compliance_request", 0.04),),
+                urgency=urgencies[ticket.ticket_id], urgency_confidence=0.7,
+                urgency_reason="closest to DEV-0001")
+
+    class Judge:
+        def check(self, sentences, retrieved, indices=None):
+            return JudgeVerdict(unsupported=(), detail="judged", prompt_version="PR-03 v1.0")
+
+    note = _json.dumps({"summary": "A former employee still has access.",
+                        "customer_goal": "Revoke the access.", "already_tried": [],
+                        "system_uncertainty": "ignored by FR-01 §3.4",
+                        "relevant_passages": [], "suggested_first_check": None})
+    config = settings(tmp_path)
+    transport = FakeTransport([{"choices": [{"message": {"content": note}}],
+                               "model": "test-model", "system_fingerprint": "fp"}] * 10)
+    client_obj = ProviderClient(config, transport=transport)
+    return SupportPipeline(retriever=retriever, classifier=VaryingClassifier(),
+                           router=Router(config), drafter=Drafter(client_obj),
+                           guardrails=Guardrails(judge=Judge()),
+                           handover_writer=HandoverWriter(client_obj), settings=config)
+
+
+def test_T_R2_2_the_queue_orders_tickets_that_came_through_the_api(tmp_path, retriever):
+    """R2 (FR-05): urgency first, on rows the API itself wrote — nothing inserted by hand.
+
+    Both tickets are `security_incident`, so both escalate by rule (FR-09) and the only thing
+    separating them in the queue is the urgency the classifier produced. The older ticket is
+    the urgent one, so an oldest-first queue and an urgency-first queue disagree.
+    """
+    pipeline = _real_pipeline(tmp_path, retriever,
+                              {"Q-LOW": "low", "Q-HIGH": "high"})
+    api = client(tmp_path, retriever, pipeline=pipeline)
+
+    def submit(ticket_id, received):
+        body = {"ticket_id": ticket_id, "channel": "email",
+                "subject": "Former employee still has access",
+                "body": "A developer left three weeks ago and we still see calls on their key.",
+                "received_at": received, "customer_tier": "business",
+                "customer_region": "europe", "language_fluency": "fluent"}
+        response = api.post("/tickets", json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    low = submit("Q-LOW", "2026-05-01T09:00:00Z")    # older, but not urgent
+    high = submit("Q-HIGH", "2026-05-03T09:00:00Z")  # newer, and urgent
+
+    assert low["decision"] == "escalate" and high["decision"] == "escalate"
+    assert high["urgency"] == "high", "the POST response reports urgency alongside intent"
+    assert high["urgency_confidence"] == pytest.approx(0.7)
+
+    items = api.get("/queue").json()["items"]
+    assert [i["ticket_id"] for i in items] == ["Q-HIGH", "Q-LOW"], (
+        "an always-null urgency column would give oldest-first: Q-LOW, Q-HIGH")
+    assert items[0]["urgency"] == "high"
+    assert items[0]["urgency_confidence"] == pytest.approx(0.7)

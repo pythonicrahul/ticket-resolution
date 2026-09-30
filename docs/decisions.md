@@ -1094,3 +1094,64 @@ deliberately reimplements so the `#uc-4--the-answered-path` style links work ide
 on GitHub and in the rendered page; all three diagram links point at files that exist. The page itself has
 **not** been opened in a browser — the Chrome extension was not connected in this session — so its
 appearance is unverified in the same way the compose stack's first `up` is.
+
+## D-60 · The classifier's columns belong on the row, and `row_fields` is narrower than `log_fields` (FR-13, FR-05, FR-08)
+
+`intent`, `intent_confidence`, `intent_alternatives`, `urgency` and `urgency_confidence` were empty on
+**every row of every database this project has ever written** — 162 of 162 in `storage/gate-openai-2.db`,
+5 of 5 in `storage/decisions.db`. `Outcome.to_entry()` simply never passed them. Two consequences, and the
+second is worse than the first:
+
+* `/queue` orders on the log's `urgency`. An always-null column meant `order_escalation_queue` fell back to
+  `medium` for every ticket, so FR-05's urgency-first queue was **oldest-first** on anything that came
+  through the real pipeline. `test_T_FR05_3` passed throughout, because it writes `urgency` into the log by
+  hand. A test that constructs the state it is testing cannot fail when the code stops producing it.
+* The Governance Framework record's `alternatives` was `[]` on every row, so the Build Specification's
+  "records the alternatives it considered, not only the option it chose" was unmet everywhere.
+
+**`Classification.row_fields()` is deliberately narrower than `log_fields()`**: no `detail`, no
+`prediction_*`. Routing, drafting and the guardrails each own those columns on their own rows, and the
+wide projection merged into an intermediate row produced rows that contradicted themselves. `_record`
+merges `{**classification, **caller}` so the caller wins; neither `DraftResult.log_fields()` nor
+`GuardrailReport.log_fields()` sets any of the five today, and T-R2-7 pins the direction so a future one
+cannot change it silently.
+
+**`log_fields()` never set `intent_confidence` either** — the same omission in a second place, reached only
+from `RoutingDecision.log_fields`, which nothing in `src/` calls. Fixed rather than left as a trap.
+
+## D-61 · `prediction_confidence` and `intent_confidence` are different questions and may disagree (FR-02, FR-13)
+
+FR-02 §3.2 floors a missing, NaN or out-of-range confidence to 0.0, and `route.py` records *the number the
+decision compared*, with a comment saying the raw value "would contradict the decision on the same row".
+Carrying the classifier's raw `intent_confidence` onto that same row reopens exactly that.
+
+It stays, because the two answer different questions: `prediction_confidence` is **what routing used**,
+`intent_confidence` is **what the classifier reported**. On a healthy ticket they are equal. On a broken
+one — a retrained calibrator emitting 1.7, a custom classifier emitting NaN — the row reads
+`reason=low_confidence, prediction_confidence=0.0, intent_confidence=1.7`, and that *difference is the
+diagnosis*. Collapsing them would hide the only evidence that the classifier is broken.
+
+What was wrong was leaving it undocumented and untested, which is what the R2 review found. T-R2-8 pins it.
+
+## D-62 · The urgency reason reaches a row, and `/queue` stops calling the escalation detail an urgency reason (FR-05)
+
+FR-05 reads "showing the urgency, its confidence **and the reason**", and FR-08 §3.4 makes that reason
+checkable evidence — the nearest labelled training tickets, because a logistic regression over embeddings
+has no readable features and inventing a sentence about keywords would be worse than admitting there is
+none. That evidence reached no row in any database: it travelled only inside `Classification.log_fields()`'s
+`detail`, which `row_fields` drops, and the graph writes no `classification` row at all.
+
+`/queue` filled its `urgency_reason` from the row's `detail`, which on a terminal row is the **escalation**
+detail. Before D-60 that was merely unhelpful, because the urgency beside it was null and the row was
+visibly unfilled. With a real urgency next to it, an agent reads
+`urgency: high · urgency_reason: "must_escalate_intent: intent security_incident"` and gets a
+plausible-looking, confident, wrong answer to "why is this urgent?". A fix that makes a field look
+authoritative has to make it correct at the same time.
+
+So: `urgency_reason` is now a decision-log column, carried from the classifier; `/queue` serves it under
+that name, and the escalation detail under `detail`. **Schema version 1 → 2.** `CREATE TABLE IF NOT EXISTS`
+does nothing to a table that already exists, so without a migration every insert into any of the ten
+databases in `storage/` would have failed on the unknown column — and under D-27 an unwritable log stops
+the run. `_migrate` is additive and idempotent: `ALTER TABLE ... ADD COLUMN` for anything missing, nothing
+rewritten, nothing dropped, an old run's rows reading NULL, which is the truth about them. Verified against
+all three real databases: 162, 5 and 20 rows preserved.

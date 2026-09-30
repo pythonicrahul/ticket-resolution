@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Self, TypeVar
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Terminal decisions end a ticket. `block` and `continue` do not: a blocked reply still ends
 #: as an escalation, so it is recorded and then followed by a terminal row (§3.1).
@@ -104,6 +104,10 @@ class DecisionEntry:
     intent_alternatives: Sequence[Sequence[Any]] = ()
     urgency: str | None = None
     urgency_confidence: float | None = None
+    #: FR-05: "showing the urgency, its confidence **and the reason**". The reason is the
+    #: classifier's nearest labelled tickets (FR-08 §3.4) — checkable evidence, not a sentence
+    #: invented about keywords — and before this column it reached no row in any database.
+    urgency_reason: str | None = None
     sources_used: Sequence[Sequence[Any]] = ()
     retrieved_doc_ids: Sequence[str] = ()
     citations: Sequence[str] = ()
@@ -171,8 +175,17 @@ _JSON_COLUMNS = ("requirement_ids", "all_reasons", "intent_alternatives", "sourc
                  "retrieved_doc_ids", "citations", "guardrail_results", "ingest_defects",
                  "redactions")
 _BOOL_COLUMNS = ("kill_switch",)
-_SCRUBBED_COLUMNS = ("reason", "detail", "explanation")
-_TRUNCATED_COLUMNS = ("reason", "detail", "explanation", "summary", "uncertainty")
+_SCRUBBED_COLUMNS = ("reason", "detail", "explanation", "urgency_reason")
+_TRUNCATED_COLUMNS = ("reason", "detail", "explanation", "summary", "uncertainty",
+                      "urgency_reason")
+
+#: Columns added after schema version 1. `CREATE TABLE IF NOT EXISTS` does nothing to a table
+#: that already exists, so a database written by an older version keeps its old shape and every
+#: insert then fails on the unknown column — which, under D-27, stops the run. Each entry is
+#: applied with `ALTER TABLE ... ADD COLUMN`, which SQLite does in constant time.
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("urgency_reason", "TEXT"),   # v2, FR-05: the evidence behind the urgency
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS decisions (
@@ -199,6 +212,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     intent_alternatives TEXT  NOT NULL,
     urgency           TEXT,
     urgency_confidence REAL,
+    urgency_reason    TEXT,
     sources_used      TEXT    NOT NULL,
     retrieved_doc_ids TEXT    NOT NULL,
     citations         TEXT    NOT NULL,
@@ -253,6 +267,7 @@ class DecisionLog:
             # by the time `record` returns. WAL lets a second process read and write alongside.
             self._connection.execute("PRAGMA journal_mode=WAL")
             self._connection.execute("PRAGMA synchronous=FULL")
+            self._migrate()
             self._connection.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -261,6 +276,21 @@ class DecisionLog:
             raise DecisionLogUnavailable(
                 f"cannot open the decision log at {self.path}: {exc}"
             ) from exc
+
+    def _migrate(self) -> None:
+        """Bring a database written by an older schema version up to this one.
+
+        Additive only, and idempotent: a column already present is skipped, so opening the same
+        path twice (which the class promises is safe) does not fail on the second open. Nothing
+        here rewrites or drops an existing row — an older run's decisions stay exactly as they
+        were logged, with the new columns reading NULL, which is the truth about them.
+        """
+        present = {row["name"] for row in
+                   self._connection.execute("PRAGMA table_info(decisions)")}
+        for column, declaration in _ADDED_COLUMNS:
+            if column not in present:
+                self._connection.execute(
+                    f"ALTER TABLE decisions ADD COLUMN {column} {declaration}")
 
     # --- writing ------------------------------------------------------------------
 

@@ -64,15 +64,30 @@ class Classification:
     fallback: bool = False
     model_fingerprint: str = ""
 
-    def log_fields(self) -> dict[str, Any]:
-        """FR-13: the classification half of a decision-log row, ready to splat into an entry."""
+    def row_fields(self) -> dict[str, Any]:
+        """FR-13, FR-05, FR-08: what the classifier decided, and nothing a caller owns.
+
+        Deliberately narrower than `log_fields`: no `detail` and no `prediction_*`, because
+        routing, drafting and the guardrails each own those on their own rows and a merge that
+        overwrote them produced rows that contradicted themselves (R2).
+        """
         return {
-            "prediction_value": self.intent,
-            "prediction_confidence": self.intent_confidence,
             "intent": self.intent,
+            "intent_confidence": self.intent_confidence,
             "intent_alternatives": self.intent_alternatives,
             "urgency": self.urgency,
             "urgency_confidence": self.urgency_confidence,
+            # FR-05 asks for the urgency, its confidence *and the reason*. It used to travel
+            # only inside `detail`, which `row_fields` drops — so it reached no row at all.
+            "urgency_reason": self.urgency_reason,
+        }
+
+    def log_fields(self) -> dict[str, Any]:
+        """FR-13: the classification half of a decision-log row, ready to splat into an entry."""
+        return {
+            **self.row_fields(),
+            "prediction_value": self.intent,
+            "prediction_confidence": self.intent_confidence,
             "detail": f"model {self.model_fingerprint}; {self.urgency_reason}",
         }
 

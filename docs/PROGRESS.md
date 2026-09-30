@@ -1454,3 +1454,67 @@ prose and one regex, with no requirement or spec for a reviewer to check it agai
 departure from `/next-feature` step 6 is visible rather than silent.
 
 `uv run pytest -q` → **506 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R2 · The classifier's columns reach the row (FR-13, FR-05, FR-08, A8)
+
+**The row's evidence was exactly right, and the consequence is worse than it reads.** `intent`,
+`intent_confidence`, `intent_alternatives`, `urgency` and `urgency_confidence` were empty on every row of
+every database this project has written: 162 of 162 in `storage/gate-openai-2.db`, 5 of 5 in
+`storage/decisions.db`. `Outcome.to_entry()` never passed them.
+
+`/queue` sorts on the log's `urgency`, so an always-null column meant `order_escalation_queue` fell back to
+`medium` for everything and **FR-05's urgency-first queue was oldest-first** on anything that came through
+the real pipeline. `test_T_FR05_3` passed the whole time because it writes `urgency` into the log by hand —
+a test that constructs the state it is testing cannot fail when the code stops producing it. That is the
+second time in three sessions a green test was covering a real defect, and both times for the same reason.
+
+**Files changed.** `src/ticketing_agent/classify.py` (new `row_fields()`; `log_fields()` builds on it and
+gained the `intent_confidence` it never set), `pipeline.py` (`Outcome` gained six fields; `to_entry`,
+`_outcome`, `_failed_outcome` and the intermediate rows carry them, via `_classification_fields` and
+`_prediction_fields`), `logging_store.py` (schema 1 → 2: `urgency_reason` column plus an additive,
+idempotent `_migrate`), `api.py` (`TicketOut` gained `urgency`/`urgency_confidence`; `QueueItem` gained
+`detail`). D-60, D-61, D-62.
+
+**Tests added (12).** `test_T_R2_1`, `_1b`, `_3`, `_4`, `_5`, `_6`, `_7`, `_8`, `_9` in
+`tests/test_pipeline.py`; `test_T_R2_2` in `tests/test_fr04_api.py`; `test_T_R2_10`, `_11` in
+`tests/test_fr13_decision_log.py`. Spec acceptance lists extended: FR-13 §6 items 20–27, FR-08 §6 items
+17–18, so these trace to a requirement rather than to a backlog row.
+
+**The independent review found one high and three mediums. All four are fixed, not recorded.**
+
+1. *high* — FR-05 asks for the urgency, its confidence **and the reason**, and the reason reached no row:
+   it travelled only in `log_fields()`'s `detail`, which `row_fields` drops, and the graph writes no
+   `classification` row. `/queue` filled `urgency_reason` from the row's `detail` — the *escalation*
+   detail. The reviewer's point is the one that matters: before this row that was merely unhelpful, because
+   the urgency beside it was null and the row was visibly unfilled; with a real urgency next to it an agent
+   reads `urgency: high · urgency_reason: "must_escalate_intent: intent security_incident"` and gets a
+   confident wrong answer to "why is this urgent?". **A fix that makes a field look authoritative has to
+   make it correct at the same time.** New column, new schema version, migration; `/queue` serves the
+   escalation detail under `detail`. T-R2-5.
+2. *medium* — `by_stage = {r["stage"]: r for r in rows}` keeps the **last** row per stage, and the FR-12
+   block row and the terminal row both carry `stage="validation"`. My own T-R2-4 was therefore testing
+   `to_entry()` twice and the block row not at all. Keyed on `decision` now. The reviewer verified this
+   with a runtime mutation rather than by reading, which is why it was caught.
+3. *medium* — `prediction_confidence` and `intent_confidence` can disagree. Kept, because they answer
+   different questions, and documented in D-61 and pinned by T-R2-8 — which is what was actually missing.
+4. *medium* — nothing asserted the property over a whole run. T-R2-6 runs the engineered corpus and
+   asserts every terminal row carries an urgency, naming the three paths allowed not to.
+
+Three lows also fixed: `_classification_fields` duck-types `row_fields` (a classifier without it turned a
+**successfully drafted** ticket into a `pipeline_error` escalation); the merge direction is pinned by
+T-R2-7; the intermediate rows now carry `prediction_value`/`prediction_confidence`, because
+`governance_record` emitted a populated `alternatives` list beside a null prediction — "alternatives to
+nothing" in the projection an assessor reads.
+
+**Recorded, not fixed.** The reviewer noted that `api.py` mutates the shared pipeline's `_log` per request
+while FastAPI runs sync endpoints on a threadpool, so two concurrent POSTs can route one ticket's
+intermediate rows through another's `DecisionLog` handle. Same path, so the content is right, but a closed
+handle raises `DecisionLogUnavailable`, which is deliberately uncaught. Pre-existing and not worsened here;
+it belongs to row R10, which reviews the API.
+
+`docs/Implementation.md` §UC-11 now carries a note saying its captured `/queue` response predates this row
+and that its `urgency: null` is the defect, not honest reporting — the document said the opposite.
+
+`uv run pytest -q` → **516 passed**. `uv run ruff check .` → clean.

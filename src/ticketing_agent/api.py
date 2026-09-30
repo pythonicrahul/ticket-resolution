@@ -76,6 +76,10 @@ class TicketOut(BaseModel):
     uncertainty: str | None = None
     intent: str | None = None
     confidence: float | None = None
+    # R2, FR-05: the urgency the classifier produced, so a caller that submits a ticket and a
+    # caller that reads `/queue` see the same field without a second request.
+    urgency: str | None = None
+    urgency_confidence: float | None = None
     threshold_applied: float | None = None
 
 
@@ -85,6 +89,9 @@ class QueueItem(BaseModel):
     urgency_confidence: float | None = None
     urgency_reason: str | None = None
     reason: str | None = None
+    #: Why the ticket escalated, in the words routing and the guardrails recorded. A different
+    #: question from `urgency_reason`, and it used to be served under that name.
+    detail: str | None = None
     summary: str | None = None
     received_at: str | None = None
     channel: str | None = None
@@ -156,6 +163,7 @@ def build_app(settings: Settings, retriever: Any | None = None,
             citations=list(outcome.citations), summary=outcome.summary,
             uncertainty=outcome.uncertainty, intent=outcome.prediction_value,
             confidence=outcome.prediction_confidence,
+            urgency=outcome.urgency, urgency_confidence=outcome.urgency_confidence,
             threshold_applied=outcome.threshold_applied)
 
     @app.get("/queue")
@@ -168,7 +176,11 @@ def build_app(settings: Settings, retriever: Any | None = None,
         ordered = order_escalation_queue(rows)[:limit]
         items = [QueueItem(ticket_id=r["ticket_id"], urgency=r.get("urgency"),
                            urgency_confidence=r.get("urgency_confidence"),
-                           urgency_reason=r.get("detail"), reason=r.get("reason"),
+                           # FR-05's reason is the classifier's evidence. This used to read
+                           # `detail`, which on a terminal row is the *escalation* detail — a
+                           # plausible-looking but wrong answer to "why is this high?".
+                           urgency_reason=r.get("urgency_reason"),
+                           detail=r.get("detail"), reason=r.get("reason"),
                            summary=r.get("summary"), received_at=r.get("received_at"),
                            channel=r.get("channel")) for r in ordered]
         return {"count": len(items), "items": [i.model_dump() for i in items]}

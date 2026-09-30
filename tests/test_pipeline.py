@@ -493,3 +493,208 @@ def test_the_kill_switch_over_a_whole_run_answers_nothing(tmp_path):
     assert report.metrics["volume"]["escalated"] == len(entries)
     assert report.exit_code == 0, "every ticket still ends, logged, with the switch on"
     assert drafting_calls(transport) == []
+
+
+# --- R2: the classification belongs on the row, not only in the handover ----------------
+
+
+def test_T_R2_1_the_terminal_row_carries_intent_urgency_and_alternatives(tmp_path):
+    """R2 (FR-13, FR-05, FR-08): what the classifier decided is on the row it decided about.
+
+    `intent`, `intent_confidence`, `intent_alternatives`, `urgency` and `urgency_confidence`
+    were empty on every row of every recorded run, because `Outcome.to_entry()` never passed
+    them. `/queue` orders on the log's `urgency`, so an always-null column silently turns
+    FR-05's urgency-first queue into an oldest-first one.
+    """
+    pipeline, _ = build(tmp_path, script=answering_script(),
+                        classifier=FakeClassifier(intent="billing_query", confidence=0.95))
+    log_path = tmp_path / "decisions.db"
+    with DecisionLog(log_path, run_id="r2") as log:
+        pipeline.attach_log(log)
+        outcome = pipeline.process(ticket())
+        log.perform(outcome.to_entry(), lambda: None)
+
+        terminal = [r for r in log.rows() if r["decision"] in {"auto_respond", "escalate"}]
+
+    assert len(terminal) == 1
+    row = terminal[0]
+    assert row["intent"] == "billing_query"
+    assert row["intent_confidence"] == pytest.approx(0.95)
+    assert row["urgency"] == "medium"
+    assert row["urgency_confidence"] == pytest.approx(0.6)
+    assert [tuple(pair) for pair in row["intent_alternatives"]] == [("quota_or_overage", 0.02)], (
+        "the Build Spec wants the alternatives considered, not only the option chosen")
+    assert outcome.decision == "auto_respond"
+
+
+def test_T_R2_1b_an_escalated_ticket_carries_them_too(tmp_path):
+    """The same fields on the path that actually fills the queue."""
+    pipeline, _ = build(tmp_path, script=[payload(note_json())],
+                        classifier=FakeClassifier(intent="security_incident", confidence=0.93))
+    log_path = tmp_path / "decisions.db"
+    with DecisionLog(log_path, run_id="r2") as log:
+        pipeline.attach_log(log)
+        outcome = pipeline.process(ticket())
+        log.perform(outcome.to_entry(), lambda: None)
+        row = next(r for r in log.rows() if r["decision"] == "escalate")
+
+    assert outcome.reason == "must_escalate_intent"
+    assert row["intent"] == "security_incident"
+    assert row["urgency"] == "medium"
+    assert row["urgency_confidence"] == pytest.approx(0.6)
+    assert row["intent_alternatives"], "an escalation is exactly where the alternatives matter"
+
+
+def test_T_R2_3_the_governance_record_of_a_real_row_lists_alternatives(tmp_path):
+    """R2: the Governance Framework's `alternatives` was `[]` on every row ever written."""
+    from ticketing_agent.logging_store import governance_record
+
+    pipeline, _ = build(tmp_path, script=answering_script())
+    with DecisionLog(tmp_path / "decisions.db", run_id="r2") as log:
+        pipeline.attach_log(log)
+        log.perform(pipeline.process(ticket()).to_entry(), lambda: None)
+        row = next(r for r in log.rows() if r["decision"] == "auto_respond")
+
+    record = governance_record(row)
+    assert record["alternatives"] == [{"value": "quota_or_overage", "confidence": 0.02}]
+    assert record["prediction"] == {"value": "billing_query", "confidence": pytest.approx(0.95)}
+
+
+def test_T_R2_4_the_intermediate_rows_carry_them_as_well(tmp_path):
+    """A `generation` or `block` row with no intent cannot be read on its own."""
+    judge = PermissiveJudge()
+    judge.check = lambda sentences, retrieved, indices=None: JudgeVerdict(
+        unsupported=(0,), detail="nothing supported", prompt_version="PR-03 v1.0")
+    pipeline, _ = build(tmp_path, script=[payload(draft_json()), payload(note_json())],
+                        judge=judge)
+    with DecisionLog(tmp_path / "decisions.db", run_id="r2") as log:
+        pipeline.attach_log(log)
+        log.perform(pipeline.process(ticket()).to_entry(), lambda: None)
+        rows = log.rows()
+        by_decision = {r["decision"]: r for r in rows}
+
+    # Keyed on `decision`, not on `stage`: the FR-12 block row and the terminal row both carry
+    # stage="validation", and the terminal one is written last — so a stage-keyed lookup keeps
+    # the terminal row and silently re-tests `to_entry` instead of `_record`.
+    assert by_decision["continue"]["stage"] == "generation"
+    assert by_decision["block"]["stage"] == "validation"
+    for which in ("continue", "block"):
+        row = by_decision[which]
+        assert row["intent"] == "billing_query", which
+        assert row["urgency"] == "medium", which
+        assert row["intent_alternatives"], which
+        assert row["urgency_reason"] == "closest to DEV-0001", which
+        assert row["prediction_value"] == "billing_query", which
+
+
+def test_T_R2_5_the_urgency_reason_reaches_the_row(tmp_path):
+    """R2 review (high): FR-05 asks for the urgency, its confidence **and the reason**.
+
+    `row_fields()` drops `detail`, which was the only place `Classification` ever put
+    `urgency_reason`, and the graph writes no `classification` row — so the evidence the
+    classifier produced reached no row in any database. `/queue` filled its `urgency_reason`
+    from `detail`, which on a terminal row is the *escalation* detail: a plausible-looking
+    but wrong answer to "why is this high?".
+    """
+    pipeline, _ = build(tmp_path, script=answering_script())
+    with DecisionLog(tmp_path / "decisions.db", run_id="r2") as log:
+        pipeline.attach_log(log)
+        log.perform(pipeline.process(ticket()).to_entry(), lambda: None)
+        row = next(r for r in log.rows() if r["decision"] == "auto_respond")
+
+    assert row["urgency_reason"] == "closest to DEV-0001"
+    assert row["urgency_reason"] != row["detail"], (
+        "the urgency reason and the escalation detail are different questions")
+
+
+def test_T_R2_6_every_terminal_row_of_a_whole_run_carries_an_urgency(tmp_path):
+    """R2 review (medium): the row's evidence was "empty on **every** row", so assert that.
+
+    One answered ticket and one escalated ticket do not pin the property the regression
+    broke. This runs the corpus built to break things and names the only paths allowed to
+    produce a terminal row without a classification.
+    """
+    entries = []
+    for name in sorted(FIXTURES.glob("*_tickets.json")):
+        entries.extend(json.loads(name.read_text("utf-8")))
+
+    pipeline, _ = build(tmp_path, script=[payload(draft_json())] * 400)
+    with DecisionLog(tmp_path / "decisions.db", run_id="r2") as log:
+        pipeline.attach_log(log)
+        for index, entry in enumerate(entries):
+            log.perform(pipeline.process(normalise_ticket(entry, index=index)).to_entry(),
+                        lambda: None)
+        terminal = log.terminal_rows()
+
+    assert len(terminal) == len(entries), "one terminal row per ticket"
+    # The classifier is faked and never fails here, so there is no allowed exception in this
+    # run: `classifier_unavailable`, `pipeline_error` and the harness's own error path are the
+    # three that legitimately have no classification, and none of them can fire.
+    unclassified = [r["ticket_id"] for r in terminal if not r["urgency"]]
+    assert not unclassified, unclassified
+    assert all(r["intent"] and r["intent_alternatives"] for r in terminal)
+
+
+def test_T_R2_7_a_caller_owns_its_own_columns_and_the_classifier_does_not(tmp_path):
+    """R2 review (low): the merge direction was a comment with no test under it.
+
+    `_record` merges `{**classification, **fields}` so a component that writes one of the five
+    keys itself wins. Nothing asserted that, so a future `log_fields()` that set `urgency`
+    could silently go either way.
+    """
+    from ticketing_agent.pipeline import _classification_fields
+
+    classification = FakeClassifier().classify(ticket())
+    assert set(_classification_fields(classification)) == {
+        "intent", "intent_confidence", "intent_alternatives", "urgency",
+        "urgency_confidence", "urgency_reason"}
+    caller_owns = {"urgency": "high"}   # what a component's own log_fields() would set
+    merged = {**_classification_fields(classification), **caller_owns}
+    assert merged["urgency"] == "high", "the caller wins"
+    assert merged["intent"] == "billing_query", "and keeps everything it did not set"
+
+
+def test_T_R2_8_the_row_states_both_the_compared_and_the_reported_confidence(tmp_path):
+    """R2 review (medium): `prediction_confidence` and `intent_confidence` may disagree.
+
+    FR-02 §3.2 floors an unusable confidence to 0.0 and `route.py` records *the number the
+    decision used*. `intent_confidence` records what the classifier reported. On a healthy
+    ticket they are equal; on a broken classifier they differ, and that difference is the
+    diagnosis, not a contradiction. Pinned here so nobody "fixes" one into the other.
+    """
+    pipeline, _ = build(tmp_path, script=[payload(note_json())],
+                        classifier=FakeClassifier(confidence=1.7))  # out of range: unusable
+    with DecisionLog(tmp_path / "decisions.db", run_id="r2") as log:
+        pipeline.attach_log(log)
+        outcome = pipeline.process(ticket())
+        log.perform(outcome.to_entry(), lambda: None)
+        row = next(r for r in log.rows() if r["decision"] == "escalate")
+
+    assert outcome.reason == "low_confidence", "FR-02 §3.2: unusable counts as below T"
+    assert row["prediction_confidence"] == 0.0, "what routing compared"
+    assert row["intent_confidence"] == pytest.approx(1.7), "what the classifier reported"
+
+
+def test_T_R2_9_a_classifier_without_row_fields_does_not_lose_the_answer(tmp_path):
+    """R2 review (low): the graph types its classifier `Any` and read attributes before.
+
+    An object without `row_fields()` raised `AttributeError` inside `_record`, which escaped to
+    `process`'s broad `except` and turned a **successfully drafted** ticket into a
+    `pipeline_error` escalation. No ticket is dropped, but a working answer was thrown away.
+    """
+    class Minimal:
+        """What the graph could rely on before R2, and nothing more."""
+
+        intent, intent_confidence, intent_alternatives = "billing_query", 0.95, ()
+
+    class MinimalClassifier:
+        def classify(self, _ticket):
+            return Minimal()
+
+    pipeline, _ = build(tmp_path, script=answering_script(), classifier=MinimalClassifier())
+    with DecisionLog(tmp_path / "decisions.db", run_id="r2") as log:
+        pipeline.attach_log(log)
+        outcome = pipeline.process(ticket())
+
+    assert outcome.decision == "auto_respond", outcome.reason
+    assert outcome.urgency is None, "nothing is invented for a classifier that has no urgency"
