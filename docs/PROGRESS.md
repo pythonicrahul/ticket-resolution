@@ -1424,3 +1424,33 @@ resolve, 3 of 3 diagram links exist. Not checked: how the page looks — the Chr
 connected, so the rendering is unverified in exactly the way the compose stack's first `up` is.
 
 `uv run pytest -q` → **505 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R1 · The test status, established (A12, NFR-09)
+
+The review row was written from `.pytest_cache/v/cache/lastfailed`, dated 28 Sep 20:55 — **before** the
+last three commits. It listed five failures. There are none: `uv run pytest -q` → **506 passed**
+(505 before this row's own test), `uv run pytest --collect-only -q` → 506 collected, `uv run ruff check .`
+clean. The five named tests pass individually. The cache was stale, not the suite.
+
+That is worth saying plainly because the row's premise was wrong and the correct response to a wrong
+premise is to say so, not to go looking for a failure to justify it.
+
+**The real defect in the row was the number in the README**: step 5 said "469 tests" while the suite held
+505, and `docs/PROGRESS.md` had said 504. A count in a setup document is wrong from the next commit
+onwards, and an assessor who runs the suite and counts something different has been handed a reason to
+distrust the rest of the file. Step 5 now says the suite runs with no network and no API key, and says
+why no number is quoted. The same edit removed "it is worth the seven tests" from the ops section, which
+had already drifted from eight.
+
+**Tests added.** `tests/test_docs_consistency.py` — a new file for the checks that stop README,
+`.env.example` and `docs/decisions.md` contradicting each other between sessions (R9 will extend it).
+`test_T_R1_1_the_readme_does_not_promise_a_test_count` fails on any `\d{2,}\s+(\w+\s+)?tests?` in the
+README; it failed on `469 tests` before the fix.
+
+**Review.** Done inline rather than with the `reviewer` subagent: the change is two sentences of README
+prose and one regex, with no requirement or spec for a reviewer to check it against. Recorded here so the
+departure from `/next-feature` step 6 is visible rather than silent.
+
+`uv run pytest -q` → **506 passed**. `uv run ruff check .` → clean.

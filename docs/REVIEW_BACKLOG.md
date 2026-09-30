@@ -19,7 +19,7 @@ the top of that file and in .claude/commands/next-feature.md. Stop at any HUMAN,
 
 | # | Item | Requirements | Depends on | Kind | Status |
 |---|---|---|---|---|---|
-| R1 | Establish the current test status and fix the README test count | A12, NFR-09 | — | build | TODO |
+| R1 | Establish the current test status and fix the README test count | A12, NFR-09 | — | build | DONE |
 | R2 | Put classification, urgency and alternatives on every decision-log row | FR-13, FR-05, FR-08, A8 | R1 | build | TODO |
 | R3 | Persist the sent reply and the handover note in the run output | FR-14, FR-13, NFR-03 | R1 | build | TODO |
 | R4 | Make the metrics report describe the system that actually ran | FR-14, A10 | R1 | build | TODO |

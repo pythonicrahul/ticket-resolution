@@ -18,7 +18,7 @@ A support system for CloudServe Solutions (Forward Deployed AI Engineering capst
    `data/development_tickets.json` and writes `storage/classifier.joblib` (about a minute). The
    harness never trains during a run, so without this it refuses to start — a missing model is a
    setup error, not a silent fallback.
-5. Check: `uv run pytest -v` — 469 tests, no network and no API key needed.
+5. Check: `uv run pytest -v` — the full suite runs with no network and no API key. (No count is quoted here on purpose: it goes stale the next time a test is added.)
 
 No uv? `python3.14 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && pip install -e .`
 
@@ -73,7 +73,7 @@ docker compose exec api rm    /app/storage/KILL_SWITCH   # and back
 `tests/test_ops_stack.py` checks the stack against the application: that Prometheus scrapes a path
 the API serves, that the viewer is read-only and points at the real log, that every mounted file
 exists, and that no service carries a key. A stack that has drifted fails quietly — empty panels, a
-target permanently down — so it is worth the seven tests.
+target permanently down — so the checks are worth having.
 
 ## Repository map
 
