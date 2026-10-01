@@ -1432,6 +1432,82 @@ Two consequences, both of which have to be said out loud:
 * **A route-agreement figure near 100% would be evidence of a bug**, not of quality — it could only be
   reached by a system that is not deterministic.
 
+**And it reaches across the two files.** 62 of the 80 validation bodies appear verbatim in
+`development_tickets.json` — which is R8's evidence for the classification figures being partly in-sample
+— and **five of them carry a different `expected_route` from their development twin**: VAL-0001,
+VAL-0037, VAL-0060, VAL-0071, VAL-0079 (three `auto_respond` → `escalate`, two the other way).
+
+VAL-0037 is one of those five, and it is the ticket review row R7 was commissioned to make escalate. Its
+development twin DEV-0106 carries the same question — *"are backups replicated outside our primary region?
+compliance review has raised this and I need definite answer"* — labelled `auto_respond`. So the rule the
+author asked for cannot agree with both copies either, and tuning the rule until it did would mean tuning
+against one validation ticket.
+
 This is a property of the supplied data, not a finding about the system, and it is not something to fix by
 tuning: CLAUDE.md forbids tuning against individual validation tickets, and the honest response is to
 report it. R13 has to decide what the gate is measured against knowing it.
+
+## D-71 · A disputed charge escalates, and every phrase in the table names a charge (FR-03 §3.1b)
+
+R7's decision: FR-03 also escalates a billing ticket that **disputes or disowns** a charge. The D-21 table
+catches the *vocabulary* of a dispute — refund, chargeback, the word "dispute" — which is not how a
+customer describes one. VAL-0072 ("there are charges on our invoice for a service I do not believe we use")
+was auto-answered and is labelled escalate.
+
+New reason `money_decision_required`, ranked directly **below** `money_commitment_requested`, so every rank
+D-16 wrote down keeps its place and a ticket that both asks for a refund and disowns the charge is logged
+as the refund request with both in `all_reasons`.
+
+**Every phrase names a charge, and that is the whole design.** The first version carried `did not use`,
+`didn't use`, `never enabled` and `not ours`, which say nothing about a bill. Matched on every ticket they
+escalated ordinary documentation questions as money disputes — "SSO was never enabled on our org, how do I
+turn it on?", "that webhook endpoint is not ours, how do I remove it?" — and the handover note then told
+the tier-two engineer the customer was disputing their bill. Anchoring each phrase to a charge gives the
+rule its context without scoping it to an intent, so a misclassified dispute is still caught, which is
+D-42's reasoning for the money rule.
+
+**Measured** (`scripts/dispute_rule_sweep.py`): 7 development and 7 validation tickets match, 6 of each
+labelled `auto_respond`. Those six are the **duplicates of VAL-0072** — byte-identical text labelled the
+opposite way (D-70) — so the rule cannot agree with both and NFR-08 forbids it trying. None is already
+caught by the money rule, so this reason is doing work rather than relabelling.
+
+## D-72 · A compliance-grade data question escalates, and three words had to come out of the table (FR-09 §3.7)
+
+The PRD's open question on data residency says account-specific or compliance-grade location questions
+escalate: the documentation describes the product's **general policy**, and a compliance review needs a
+statement about *this account* that no article can ground. VAL-0037 was auto-answered and is labelled
+escalate. New reason `compliance_data_question`, ranked above `unknown_intent` — a ticket the classifier
+placed as `data_residency` is more informative than one it could not place.
+
+**Scoped to the predicted intent, not to the words.** "Our deployment keeps failing on the health check"
+contains `our` and is a deployment question; a rule reading every `our` as a compliance request would
+escalate most of the corpus.
+
+**Three words came out, and each for the same reason — a bare word is the wrong unit.**
+
+| removed | what it matched that it should not |
+|---|---|
+| `audit` | "how long is the retention period for **audit** records" — a product feature, labelled answerable |
+| `gdpr` | "which regions are available, and is **GDPR** covered by the standard terms?" — a policy noun |
+| `definite answer` | "do you offer an EU region? I need a **definite answer** before we pick one" — impatience |
+
+`gdpr` and `definite answer` were in R7's own list of wordings, so removing them is a **deviation from the
+author's decision**, taken because the same decision's carve-out says a general policy question stays
+answerable and these three broke it. VAL-0037 still escalates: it carries `compliance review` and
+`our primary region` as well, so `definite answer` was never what caught it. `auditor` still reaches
+`auditors` through the plural rule. This is the third time in this project that a word has been the wrong
+unit (D-17 injection markers, D-51 phone numbers).
+
+**And one phrase was deliberately not added.** A reviewer proposed `written confirmation` / `in writing` —
+a request for a statement a third party will rely on, which *is* the archetype of compliance-grade, and
+which would catch 6 tickets the labels agree should escalate. But **17 tickets in the supplied data say it
+and 11 are labelled answerable**, so it buys 6 agreements for 11 disagreements, and R7's decision did not
+list it. Inventing a phrase that costs label agreement is the author's call. `T-R7-2f` pins its absence so
+adding it has to be a decision rather than a drift, and the measurement is here for R13.
+
+**Measured**: 16 development and 4 validation tickets match, 12 and 2 of them labelled `auto_respond`. Two
+of the validation ones are VAL-0054 and VAL-0076, which ask where *this account's* data is held — what the
+rule is for, and what the labels call answerable. VAL-0054 matches on its **canned subject line** ("Where
+is our data stored") rather than its body; DEV-0058 and DEV-0059 carry the identical body under a
+different subject and do not match, so two identical bodies route differently on text the customer did not
+write. That is recorded in FR-09 §7 and belongs to R13.

@@ -1829,3 +1829,74 @@ re-applying the patch scripts from the scratchpad; verified by the full suite. M
 copy the file aside and restore from the copy.
 
 `uv run pytest -q` → **574 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R7 · A disputed charge, and a compliance-grade data question (FR-03, FR-09)
+
+Two tickets were auto-answered that the requirements say must reach a person: VAL-0072 ("charges on our
+invoice for a service I do not believe we use" — a dispute, which FR-03 escalates, containing none of the
+trigger words) and VAL-0037 ("backups replicated outside our primary region? A compliance review has
+raised this" — which the PRD's open question on data residency escalates).
+
+**Files changed.** `src/ticketing_agent/route.py`, `src/ticketing_agent/handover.py`,
+`evaluation/harness.py`, `scripts/dispute_rule_sweep.py` (new), `tests/test_fr02_routing.py`,
+`tests/test_fr14_harness.py`, `tests/test_engineered_fixtures.py`, and the FR-02, FR-03, FR-09 and FR-12
+specs. D-71, D-72.
+
+**Tests added (80 in the R7 family).** One body per phrase for both tables, plus the scoping, the
+precedence, the sentences, the sweep, and the two deliberate carve-outs. **636 passing.**
+
+### The review found two highs, and the first was mine to own
+
+1. **I under-implemented the decision.** The row says "FR-03 also escalates **a billing ticket** that
+   disputes or disowns a charge". I matched every ticket, and four of my phrases named no charge at all —
+   `did not use`, `didn't use`, `never enabled`, `not ours`. The result: "SSO was never enabled on our org,
+   how do I turn it on?" escalated as a money dispute, and the handover note told the tier-two engineer
+   that the customer was disputing their bill. Four such false positives were demonstrated through the real
+   router. Every phrase names a charge now, which gives the rule its context without scoping it to an
+   intent — so a *misclassified* dispute is still caught, which is D-42's reasoning for the money rule.
+   `T-R7-1d` pins it.
+2. **22 of the 27 dispute phrases could be deleted with the suite green.** Four of my seven test bodies
+   carried two triggers each, so the shorter phrase shadowed the other. That is the **fourth** time this
+   backlog has hit the same shape — a single-class precision fixture, an `all()` over an empty sequence,
+   two matrix cells holding the same value, and now this. There is one body per phrase now (34 + 27), each
+   asserted to carry no sibling trigger, plus `T-R7-1c`/`T-R7-2c` holding the bodies against the tables and
+   `T-FR12-5` holding both tables against their specs — which the money and date tables already had and
+   mine did not.
+
+### Four mediums
+
+`T-R7-2`'s `assert "compliance" in detail` could not fail: `detail` always begins
+`compliance_data_question: …`, so emptying the whole table left it passing. It asserts the segments now.
+Three words had to come out of the compliance table — `audit`, `gdpr`, `definite answer` — each matching a
+product noun or ordinary impatience rather than a process; see D-72, including that two of them were in
+the author's own list and why removing them follows from the same decision's carve-out. Real false
+negatives were missing (`billed twice`, `charged me twice`, `duplicate invoice`, `still being billed`,
+`never signed up`, `don't believe we used`) and are in. And `evaluation/harness.py`'s
+`_NOT_A_TUNING_RESULT` was a second, hand-maintained copy of the reason list that R7's two new reasons
+never reached — so a rule-only run under-counted and could print the wrong conclusion about itself, in the
+file whose own review row was about figures contradicting each other. It is derived from `PRECEDENCE` now,
+pinned by `T-R7-6`.
+
+### What I did not do
+
+A reviewer proposed adding `written confirmation` / `in writing` to the compliance table. It is a good
+suggestion on the merits — it is the archetype of compliance-grade and would catch 6 tickets the labels
+agree should escalate. I measured it: **17 tickets in the supplied data say it and 11 are labelled
+answerable**, so it buys 6 agreements for 11 disagreements, and R7's decision did not list it. I left it
+out, pinned its absence with `T-R7-2f` so adding it must be a decision rather than a drift, and put the
+measurement in D-72 for R13. Inventing a rule that costs label agreement is not mine to do.
+
+### For R13
+
+* The dispute rule escalates 6 validation tickets labelled `auto_respond`. **All six are duplicates of
+  VAL-0072 with identical text and the opposite label** (D-70), so this is the data contradicting itself,
+  not the rule being wrong.
+* The residency rule escalates VAL-0054 and VAL-0076, which ask where *this account's* data is held — what
+  the rule is for, and what the labels call answerable. VAL-0054 matches on its **canned subject line**,
+  and two identical bodies under different subjects route differently as a result.
+* VAL-0037, the ticket this row was commissioned for, has a development twin (DEV-0106) with the same
+  question labelled `auto_respond`. The rule cannot satisfy both.
+
+`uv run pytest -q` → **636 passed**. `uv run ruff check .` → clean.

@@ -1723,3 +1723,30 @@ def test_T_R6_5_an_answer_to_a_must_not_auto_respond_ticket_is_called_a_breach(t
     assert "must_not_auto_respond" in cell["achieved"]
     markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
     assert "T-FORBIDDEN" in markdown
+
+
+def test_T_R7_6_the_not_a_tuning_result_set_is_derived_not_copied(tmp_path):
+    """R7 review (medium): it was a hand-maintained second copy, and R7's two new routing
+    reasons did not reach it.
+
+    So in a run where everything escalated on rules, the harness's own caveat under-counted and
+    could print the wrong conclusion about the run — in the file whose review row (R4) was
+    about figures contradicting each other. D-18's shape, one layer up.
+    """
+    from evaluation.harness import _not_a_tuning_result
+    from ticketing_agent.route import PRECEDENCE
+
+    derived = _not_a_tuning_result()
+    assert derived >= set(PRECEDENCE) - {"low_confidence", "no_retrieval"}, (
+        "every routing rule is a construction, so adding one must not need an edit here")
+    assert "money_decision_required" in derived and "compliance_data_question" in derived
+    assert "low_confidence" not in derived, "the threshold doing its work is the tuning result"
+    assert "no_retrieval" not in derived
+    assert "provider_unavailable" in derived, "FR-15: an outage is not a tuning result either"
+
+    # And it reaches the report: a run that escalated entirely on rules says so.
+    report = harness(tmp_path, FakePipeline(
+        decide=lambda t: ("escalate", "money_decision_required")))
+    cell = {row["measure"]: row for row in report.metrics["results_table"]}["Escalation rate"]
+    assert "not a tuning result" in cell["confidence"]
+    assert "money_decision_required" in cell["confidence"]

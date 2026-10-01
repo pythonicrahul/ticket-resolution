@@ -58,6 +58,15 @@ UNCERTAINTY = {
     "money_commitment_requested":
         "The customer is asking for money back or another billing commitment, which only a "
         "person can promise.",
+    # R7. Written for the tier-two engineer picking the ticket up, which is why they say what
+    # the *customer* claimed rather than which table matched.
+    "money_decision_required":
+        "The customer says a charge on their bill is wrong or not theirs, which is a dispute "
+        "and only a person can settle it.",
+    "compliance_data_question":
+        "The customer is asking where this account's data is held, or needs the answer for a "
+        "compliance or legal process; the documentation describes the general policy and "
+        "cannot speak for one account.",
     "date_commitment_requested":
         "The customer is asking us to commit to a date, which only a person can give.",
     "unknown_intent":

@@ -138,6 +138,13 @@ def test_T_FR02_5_every_reason_has_a_sentence_a_manager_could_read(tmp_path):
         "must_escalate_intent": lambda: decide(tmp_path, cls=classification("security_incident")),
         "money_commitment_requested": lambda: decide(
             tmp_path, tkt=ticket(body="Please refund the overage charge.")),
+        # R7: a disputed charge, and a compliance-grade data question. This test exists to make
+        # a new rank impossible to add without a routed case and a written sentence.
+        "money_decision_required": lambda: decide(
+            tmp_path, tkt=ticket(body="We were charged twice for the same month.")),
+        "compliance_data_question": lambda: decide(
+            tmp_path, cls=classification("data_residency"),
+            tkt=ticket(body="Where is our data held? Our auditors have asked.")),
         "date_commitment_requested": lambda: decide(
             tmp_path, tkt=ticket(body="When will this be fixed? We need a firm date.")),
         "unknown_intent": lambda: decide(tmp_path, cls=classification("not_in_the_taxonomy")),
@@ -609,3 +616,410 @@ def test_no_classification_at_all_still_escalates(tmp_path):
     assert result.decision == "escalate"
     assert result.reason == "unknown_intent"
     assert result.confidence == 0.0
+
+
+# --- R7: disputed charges, and compliance-grade data-residency questions ------------------
+
+
+def test_T_R7_1_a_disputed_charge_escalates_even_without_the_word_dispute(tmp_path):
+    """R7 (FR-03): VAL-0072 was auto-answered, and it is a disputed charge.
+
+    "There are charges on our invoice for a service I do not believe we use." FR-03 says a
+    dispute must reach a person, and the D-21 trigger table catches the *vocabulary* of a
+    dispute — refund, chargeback, dispute — not a customer describing one in their own words.
+    A customer disowning a charge is making the same claim without any of those words.
+    """
+    outcome = decide(tmp_path, tkt=ticket(
+        body="There are charges on our invoice for a service I do not believe we use. "
+             "Could you explain what these relate to?"))
+
+    assert outcome.escalated
+    assert outcome.reason == "money_decision_required"
+    assert "money_decision_required" in outcome.all_reasons
+    assert "do not believe we use" in (outcome.detail or ""), (
+        "the log records which phrase fired, as the money rule already does")
+
+
+#: One body per phrase, and **exactly one trigger in each**. The R7 review found that four of
+#: the seven original bodies carried two triggers at once, so 22 of the 27 phrases could be
+#: deleted with the whole suite still green — the same "two code paths look identical" trap this
+#: backlog has now hit four times. `test_T_R7_1c` holds this list against the table itself, so a
+#: phrase added without a body is a failure rather than a silent gap.
+DISPUTE_BODIES = {
+    "do not believe we use": "There is a line for a service I do not believe we use.",
+    "don't believe we use": "There is a line for a service I don't believe we use.",
+    "do not believe we used": "A line appeared for something I do not believe we used.",
+    "don't believe we used": "A line appeared for something I don't believe we used.",
+    "did not order": "We did not order that add-on.",
+    "didn't order": "We didn't order that add-on.",
+    "never ordered": "We never ordered that add-on.",
+    "never signed up": "We never signed up for that add-on.",
+    "do not recognise": "There is an item here I do not recognise.",
+    "don't recognise": "There is an item here I don't recognise.",
+    "do not recognize": "There is an item here I do not recognize.",
+    "don't recognize": "There is an item here I don't recognize.",
+    "should not be charged": "We should not be charged for a seat we removed.",
+    "shouldn't be charged": "We shouldn't be charged for a seat we removed.",
+    "should not have been charged": "We should not have been charged for that seat.",
+    "charged twice": "We were charged twice for March.",
+    "charged us twice": "You charged us twice for March.",
+    "charged me twice": "You charged me twice for March.",
+    "billed twice": "We were billed twice for March.",
+    "billed us twice": "You billed us twice for March.",
+    "billed me twice": "You billed me twice for March.",
+    "double charged": "We were double charged for March.",
+    "double billed": "We were double billed for March.",
+    "duplicate charge": "There is a duplicate charge on the account.",
+    "duplicate invoice": "There is a duplicate invoice on the account.",
+    "still being billed": "We cancelled last month and are still being billed.",
+    "still billed for": "We are still billed for a seat we removed.",
+    "overcharged": "I think we have been overcharged this quarter.",
+    "over charged": "I think we have been over charged this quarter.",
+    "incorrect charge": "There is an incorrect charge on the account.",
+    "wrong charge": "There is a wrong charge on the account.",
+    "charge is not ours": "That charge is not ours.",
+    "charges are not ours": "Those charges are not ours.",
+    "line is not ours": "That line is not ours.",
+}
+
+
+@pytest.mark.parametrize("phrase", sorted(DISPUTE_BODIES))
+def test_T_R7_1b_every_dispute_phrase_has_a_body_of_its_own(tmp_path, phrase):
+    """R7's table, one phrase at a time, so a regression names the phrase it lost.
+
+    The R7 review proved the first version of this test could not do that: four of its seven
+    bodies carried two triggers, so deleting any of 22 phrases left the suite green.
+    """
+    from ticketing_agent.route import DISPUTE_TRIGGERS, matches_triggers
+
+    body = DISPUTE_BODIES[phrase]
+    matched = matches_triggers(body, DISPUTE_TRIGGERS)
+    assert phrase in matched, (matched, body)
+    strays = [o for o in matched if o != phrase and not matches_triggers(phrase, (o,))]
+    assert not strays, (
+        f"{phrase!r}: the body also matches {strays}, so deleting {phrase!r} would not "
+        f"change this case")
+    outcome = decide(tmp_path, tkt=ticket(body=body))
+    assert outcome.escalated, body
+    assert outcome.reason == "money_decision_required", body
+
+
+def test_T_R7_1c_the_bodies_and_the_table_cannot_drift(tmp_path):
+    """D-18: a phrase added to the table without a body is a gap nobody would see."""
+    from ticketing_agent.route import DISPUTE_TRIGGERS
+
+    assert set(DISPUTE_BODIES) == set(DISPUTE_TRIGGERS), (
+        f"untested phrases: {set(DISPUTE_TRIGGERS) - set(DISPUTE_BODIES)}; "
+        f"bodies for phrases that no longer exist: {set(DISPUTE_BODIES) - set(DISPUTE_TRIGGERS)}")
+
+
+@pytest.mark.parametrize("body", [
+    "SSO was never enabled on our org. How do I turn it on for the first time?",
+    "We did not use the deprecated v1 endpoint, yet the warning still appears.",
+    "That webhook endpoint is not ours, how do I remove it from the project?",
+    "We did not use the full quota last month; how is the included allowance calculated?",
+])
+def test_T_R7_1d_a_question_that_is_not_about_a_charge_is_not_a_dispute(tmp_path, body):
+    """R7 review (high): the first table carried four phrases that name no charge.
+
+    Matched on every ticket, `did not use`, `never enabled` and `not ours` escalated ordinary
+    documentation questions as money disputes — and the handover note then told the tier-two
+    engineer that the customer was disputing their bill, for an SSO question. Every phrase in
+    the table names a charge now, which is what gives the rule its context (the row's decision
+    says "a **billing** ticket that disputes or disowns a charge").
+    """
+    for intent in ("sso_configuration", "api_usage_question", "configuration_help",
+                   "quota_or_overage"):
+        outcome = decide(tmp_path, cls=classification(intent=intent), tkt=ticket(body=body))
+        assert not outcome.escalated, f"[{intent}] {body}"
+
+
+def test_T_R7_2_a_compliance_grade_data_residency_question_escalates(tmp_path):
+    """R7 (FR-09, the PRD's open question on data residency): VAL-0037 was auto-answered.
+
+    "Are backups replicated outside our primary region? A compliance review has raised this and
+    I need a definite answer." The PRD's open question says account-specific or
+    compliance-grade location questions escalate: the documentation describes the product's
+    general policy, and a compliance review needs a statement about *this account* that no
+    article can ground.
+    """
+    outcome = decide(tmp_path, cls=classification(intent="data_residency"), tkt=ticket(
+        subject="Question about backup regions",
+        body="Are backups replicated outside our primary region? A compliance review has "
+             "raised this and I need a definite answer."))
+
+    assert outcome.escalated
+    assert outcome.reason == "compliance_data_question"
+    # On the segment, not on the whole string: `detail` always begins
+    # "compliance_data_question: …", so `"compliance" in detail` was true for *any* escalation
+    # with this reason and could not fail — emptying the table entirely left it passing.
+    detail = outcome.detail or ""
+    assert "account-specific: our primary region" in detail
+    assert "compliance: compliance, compliance review" in detail
+
+
+#: One body per phrase, carrying exactly that trigger — see `DISPUTE_BODIES` for why.
+RESIDENCY_BODIES = {
+    "our data": "Which region holds our data?",
+    "our backups": "Which region holds our backups?",
+    "our logs": "Which region stores our logs?",
+    "our records": "Which region stores our records?",
+    "our account": "Which region was our account created in?",
+    "this account": "Which region was this account created in?",
+    "our primary region": "Is anything replicated outside our primary region?",
+    "our region": "Can you tell me our region?",
+    "our customer data": "Which region holds our customer data?",
+    "where is our": "Where is our information held?",
+    "our files": "Which region stores our files?",
+    "compliance": "Does compliance cover this region question?",
+    "compliance review": "A compliance review has raised the question of region.",
+    "compliance team": "Our compliance team has raised the question of region.",
+    "for compliance": "We need the region for compliance purposes.",
+    "auditor": "An auditor has raised the question of region.",
+    "being audited": "We are being audited and need to state the region.",
+    "audit requires": "The audit requires us to state the region.",
+    "audit asks": "The audit asks which region is used.",
+    "audit is asking": "The audit is asking which region is used.",
+    "regulator": "The regulator has asked which region is used.",
+    "regulatory requirement": "A regulatory requirement means we must state the region.",
+    "legal review": "A legal review has raised the question of region.",
+    "legal team": "Our legal team has raised the question of region.",
+    "data protection officer": "The data protection officer has asked which region is used.",
+    "attestation": "We need an attestation stating which region is used.",
+}
+
+
+@pytest.mark.parametrize("phrase", sorted(RESIDENCY_BODIES))
+def test_T_R7_2b_every_residency_phrase_has_a_body_of_its_own(tmp_path, phrase):
+    """Each phrase on its own, so deleting one fails a named case."""
+    from ticketing_agent.route import (
+        ACCOUNT_SPECIFIC_TRIGGERS,
+        COMPLIANCE_TRIGGERS,
+        matches_triggers,
+    )
+
+    body = RESIDENCY_BODIES[phrase]
+    matched = (matches_triggers(body, ACCOUNT_SPECIFIC_TRIGGERS)
+               + matches_triggers(body, COMPLIANCE_TRIGGERS))
+    assert phrase in matched, (matched, body)
+    # Some phrases nest — `compliance` is inside `compliance review`, `in writing` inside
+    # `confirmation in writing` — so "exactly one trigger" is impossible for the longer ones.
+    # What has to hold is that the body is *specifically* about this phrase: every other phrase
+    # it matches is one the matcher finds **inside this phrase**, so no sibling is carrying it.
+    # Containment is asked of `matches_triggers`, not of `in`: the matcher respects word
+    # boundaries, so "we use" does not match "we used" even though one contains the other.
+    strays = [o for o in matched if o != phrase and not matches_triggers(phrase, (o,))]
+    assert not strays, (
+        f"{phrase!r}: the body also matches {strays}, so deleting {phrase!r} would not "
+        f"change this case")
+    outcome = decide(tmp_path, cls=classification(intent="data_residency"),
+                     tkt=ticket(body=body))
+    assert outcome.escalated, body
+    assert outcome.reason == "compliance_data_question", body
+
+
+def test_T_R7_2e_the_phrases_that_are_shadowed_by_a_shorter_one_are_named(tmp_path):
+    """Which phrases are redundant for *coverage*, and why they are kept anyway.
+
+    `compliance review` can never decide a routing outcome that `compliance` would not already
+    decide. It stays because the decision-log `detail` names what matched, and "compliance
+    review" tells the tier-two engineer more than "compliance". Asserting the set makes that a
+    deliberate, visible choice rather than an accident — and makes a *new* redundant phrase,
+    which would be an accident, fail.
+    """
+    from ticketing_agent.route import (
+        ACCOUNT_SPECIFIC_TRIGGERS,
+        COMPLIANCE_TRIGGERS,
+        DISPUTE_TRIGGERS,
+        matches_triggers,
+    )
+
+    def shadowed(table):
+        """Phrases the matcher would still find via a shorter phrase in the same table.
+
+        Asked of `matches_triggers`, not of `in`: word boundaries mean "do not believe we use"
+        does **not** match "do not believe we used", so the two are independent despite one
+        containing the other as a string. Using `in` here claimed four phrases were redundant
+        that are not.
+        """
+        return {p for p in table
+                if matches_triggers(p, tuple(o for o in table if o != p))}
+
+    assert shadowed(DISPUTE_TRIGGERS) == set(), (
+        "no dispute phrase is reachable through another, so each one can decide a case")
+    assert shadowed(ACCOUNT_SPECIFIC_TRIGGERS) == set()
+    assert shadowed(COMPLIANCE_TRIGGERS) == {
+        "compliance review", "compliance team", "for compliance"}
+
+
+def test_T_R7_2c_the_residency_bodies_and_the_tables_cannot_drift(tmp_path):
+    from ticketing_agent.route import ACCOUNT_SPECIFIC_TRIGGERS, COMPLIANCE_TRIGGERS
+
+    table = set(ACCOUNT_SPECIFIC_TRIGGERS) | set(COMPLIANCE_TRIGGERS)
+    assert set(RESIDENCY_BODIES) == table, (
+        f"untested: {table - set(RESIDENCY_BODIES)}; stale: {set(RESIDENCY_BODIES) - table}")
+
+
+@pytest.mark.parametrize("body", [
+    "Do you offer an EU region for new projects? I need a definite answer before we pick one.",
+    "Which regions are available, and is GDPR covered by the standard terms?",
+    "How long is the retention period for audit records, and is it configurable?",
+])
+def test_T_R7_2d_impatience_and_product_nouns_are_not_a_compliance_process(tmp_path, body):
+    """R7 review (medium): `gdpr`, `definite answer` and bare `audit` escalated policy questions.
+
+    FR-09 §3.7 promises that a general policy question stays answerable, and these three broke
+    that promise. GDPR is a product-policy noun, a definite answer is impatience, and "audit
+    records" is a feature. Third time in this project that a bare word was the wrong unit
+    (D-17 injection markers, D-51 phone numbers).
+    """
+    outcome = decide(tmp_path, cls=classification(intent="data_residency"), tkt=ticket(body=body))
+    assert not outcome.escalated, body
+
+
+def test_T_R7_3_an_explanatory_billing_question_still_answers(tmp_path):
+    """R7: the rule is a floor on commitments, not a ban on billing questions.
+
+    FR-03 says explanatory billing questions *may* be answered, and the PRD measured 88% of
+    billing_query tickets answerable. A dispute rule that caught "how is proration calculated"
+    would cost most of that.
+    """
+    for body in ("How is proration calculated when we upgrade mid-month?",
+                 "Where can I see the breakdown of my invoice by service?",
+                 "What is included in the usage limit on the business plan?",
+                 "When does my billing period end?"):
+        outcome = decide(tmp_path, tkt=ticket(body=body))
+        assert not outcome.escalated, body
+        assert outcome.reason is None, body
+
+
+def test_T_R7_4_a_general_data_residency_question_still_answers(tmp_path):
+    """R7: a question about the product's published policy is what the docs are for."""
+    for body in ("Which regions do you offer for deployment?",
+                 "Do you have a data centre in Australia?",
+                 "What regions are available on the business plan?"):
+        outcome = decide(tmp_path, cls=classification(intent="data_residency"),
+                         tkt=ticket(body=body))
+        assert not outcome.escalated, body
+
+
+def test_T_R7_4b_the_new_rules_are_scoped_to_the_intents_they_belong_to(tmp_path):
+    """The data-residency rule is about `data_residency` tickets, not about the word "our".
+
+    "Our deployment keeps failing" is a deployment question that happens to say "our", and a
+    rule that read it as a compliance request would escalate most of the corpus.
+    """
+    outcome = decide(tmp_path, cls=classification(intent="deployment_failure"),
+                     tkt=ticket(body="Our deployment keeps failing on the health check."))
+    assert not outcome.escalated
+
+
+def test_T_R7_4c_the_dispute_rule_outranks_nothing_it_should_not(tmp_path):
+    """D-16: a new reason takes a rank and leaves every existing rank where it was."""
+    from ticketing_agent.route import PRECEDENCE
+
+    assert PRECEDENCE.index("money_commitment_requested") < PRECEDENCE.index(
+        "money_decision_required")
+    assert PRECEDENCE.index("money_decision_required") < PRECEDENCE.index(
+        "date_commitment_requested")
+    assert PRECEDENCE.index("compliance_data_question") < PRECEDENCE.index("unknown_intent")
+    # A refund request that also disowns the charge is logged as the refund request.
+    outcome = decide(tmp_path, tkt=ticket(
+        body="We were charged twice, so please refund the duplicate."))
+    assert outcome.reason == "money_commitment_requested"
+    assert "money_decision_required" in outcome.all_reasons, "and neither fact is lost"
+
+
+def test_T_R7_4d_the_new_reasons_carry_a_sentence_a_manager_can_read(tmp_path):
+    """FR-13 §3.2: every reason has one written sentence, and no codes in it."""
+    from ticketing_agent.route import EXPLANATIONS
+
+    for reason in ("money_decision_required", "compliance_data_question"):
+        assert reason in EXPLANATIONS, reason
+        sentence = EXPLANATIONS[reason]
+        assert sentence.endswith(".") and sentence[0].isupper(), reason
+        assert "_" not in sentence, f"{reason}: a code leaked into the sentence"
+
+
+def test_T_R7_5_the_sweep_reports_what_the_new_rules_cost(tmp_path):
+    """R7 asked for this **reported, not asserted** — so the test is of the reporting.
+
+    The answer is a judgement for the author: both rules escalate tickets the labels call
+    answerable, and on the validation set the labels contradict themselves on exactly those
+    tickets (D-70). A test that asserted agreement would be asserting a contradiction.
+    """
+    import json as _json
+
+    from scripts.dispute_rule_sweep import main as sweep_main
+    from scripts.dispute_rule_sweep import sweep
+
+    source = tmp_path / "sweep.json"
+    source.write_text(_json.dumps([
+        {"ticket_id": "S-DISPUTE", "channel": "email", "subject": "Invoice",
+         "body": "There are charges for a service I do not believe we use.",
+         "received_at": "2026-05-01T09:00:00Z",
+         "labels": {"intent": "billing_query", "expected_route": "auto_respond"}},
+        {"ticket_id": "S-REFUND", "channel": "email", "subject": "Invoice",
+         "body": "We were charged twice, so please refund the duplicate.",
+         "received_at": "2026-05-01T09:00:00Z",
+         "labels": {"intent": "billing_query", "expected_route": "escalate"}},
+        {"ticket_id": "S-RESIDENCY", "channel": "email", "subject": "Regions",
+         "body": "Where is our data held? Our auditors have asked.",
+         "received_at": "2026-05-01T09:00:00Z",
+         "labels": {"intent": "data_residency", "expected_route": "escalate"}},
+        {"ticket_id": "S-PLAIN", "channel": "email", "subject": "Regions",
+         "body": "Which regions do you offer on the business plan?",
+         "received_at": "2026-05-01T09:00:00Z",
+         "labels": {"intent": "data_residency", "expected_route": "auto_respond"}},
+    ]), encoding="utf-8")
+
+    result = sweep(source)
+    dispute = result["rules"]["money_decision_required"]
+    assert dispute["matched"] == 2
+    assert dispute["labels_say_answer"] == 1, "S-DISPUTE: the rule escalates what a label answers"
+    assert dispute["labels_agree_escalate"] == 1
+    assert dispute["labels_absent"] == 0
+    assert result["rules"]["compliance_data_question"]["already_caught_by_the_money_rule"] is None, (
+        "money triggers say nothing about a residency ticket, so the field is omitted there "
+        "rather than printed as a misleading zero")
+    assert dispute["already_caught_by_the_money_rule"] == 1, (
+        "S-REFUND says 'refund' too, so the new rule changes nothing for it — reporting that "
+        "is the difference between a rule's reach and its effect")
+
+    residency = result["rules"]["compliance_data_question"]
+    assert [r["ticket_id"] for r in residency["tickets"]] == ["S-RESIDENCY"], (
+        "S-PLAIN asks about the published policy and must not match")
+
+    assert sweep_main(["--input", str(source)]) == 0
+    assert sweep_main(["--input", str(tmp_path / "missing.json")]) == 2, (
+        "a bad path is a clean exit, not a traceback")
+
+
+def test_T_R7_5b_the_sweep_reads_the_rules_that_run(tmp_path):
+    """D-18: the fixtures' expectations come from the tables, never from a second copy.
+
+    A sweep with its own hardcoded phrase list would keep reporting on a rule that had changed.
+    """
+    import scripts.dispute_rule_sweep as module
+    from ticketing_agent import route
+
+    assert module.DISPUTE_TRIGGERS is route.DISPUTE_TRIGGERS
+    assert module.COMPLIANCE_TRIGGERS is route.COMPLIANCE_TRIGGERS
+    assert module.ACCOUNT_SPECIFIC_TRIGGERS is route.ACCOUNT_SPECIFIC_TRIGGERS
+
+
+def test_T_R7_2f_the_written_confirmation_wording_is_deliberately_not_a_trigger(tmp_path):
+    """The one place R7 is narrower than a reviewer suggested, pinned so it is a choice.
+
+    A request for a written statement a third party will rely on *is* the archetype of
+    "compliance-grade", and adding it would catch 6 tickets the labels agree should escalate.
+    But 17 tickets in the supplied data say "written confirmation" and 11 of them are labelled
+    answerable, so it buys 6 agreements for 11 disagreements — and R7's decision did not list
+    it. Inventing a phrase that costs label agreement is the author's call, not mine. If it is
+    added, this test is the one to delete, deliberately.
+    """
+    outcome = decide(tmp_path, cls=classification(intent="data_residency"), tkt=ticket(
+        body="One of our customers has asked for written confirmation of where their data is "
+             "physically stored. Could you point me to something I can share with them?"))
+    assert not outcome.escalated, (
+        "if this now escalates, the phrase was added — check it was a decision and not a drift")

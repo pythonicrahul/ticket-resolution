@@ -23,7 +23,14 @@ from ticketing_agent.guardrails import (
     secrets_in,
 )
 from ticketing_agent.ingest import load_tickets, normalise_ticket
-from ticketing_agent.route import DATE_TRIGGERS, MONEY_TRIGGERS, matches_triggers
+from ticketing_agent.route import (
+    ACCOUNT_SPECIFIC_TRIGGERS,
+    COMPLIANCE_TRIGGERS,
+    DATE_TRIGGERS,
+    DISPUTE_TRIGGERS,
+    MONEY_TRIGGERS,
+    matches_triggers,
+)
 from ticketing_agent.route import PRECEDENCE as ROUTE_PRECEDENCE
 
 #: D-16's order, restricted to the reasons a ticket's own text can produce. Taken from the shipped
@@ -309,6 +316,15 @@ def test_T_FR12_5_specs_and_mirrored_tables_agree_with_the_data():
                                              drop={"ticket.text", "money_commitment_requested"})
     assert set(DATE_TRIGGERS) == spec_table(fr03, "2. **Date commitment requested",
                                             drop={"date_commitment_requested"})
+    # R7's two tables, held to their specs the same way. The R7 review found them agreeing with
+    # the specs and nothing keeping them agreeing — the gap this block exists to close.
+    assert set(DISPUTE_TRIGGERS) == spec_table(
+        fr03, "1b. **Charge disputed or disowned",
+        drop={"ticket.text", "money_decision_required", "expected_route: escalate"})
+    fr09 = (ROOT / "docs" / "specs" / "FR-09.md").read_text(encoding="utf-8")
+    assert set(ACCOUNT_SPECIFIC_TRIGGERS) | set(COMPLIANCE_TRIGGERS) == spec_table(
+        fr09, "7. **A compliance-grade data-residency question escalates",
+        drop={"compliance_data_question", "data_residency", "escalate"})
 
 
 def test_T_FR03_1_money_and_date_fixtures_escalate(corpus):

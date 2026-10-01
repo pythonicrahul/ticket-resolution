@@ -56,6 +56,77 @@ MONEY_TRIGGERS = (
     "compensate", "waive", "waiver", "write off", "cancel the charge",
     "reverse the charge", "reversal", "goodwill",
 )
+#: FR-03 §3.1b (review row R7), verbatim. A customer **disowning** a charge is disputing it, and
+#: FR-03 says a dispute reaches a person. The D-21 table above catches the *vocabulary* of a
+#: dispute — refund, chargeback, dispute — which is not how a customer describes one: VAL-0072
+#: ("charges on our invoice for a service I do not believe we use") was auto-answered and is
+#: labelled `expected_route: escalate`. These phrases are claims about the bill being wrong, not
+#: requests to be paid, which is why they are a separate reason ranked below the money rule.
+#:
+#: **Every phrase names a charge**, and that is load-bearing. The row's decision says "a
+#: **billing** ticket that disputes or disowns a charge", and the first version of this table
+#: carried four phrases that say nothing about a bill — `did not use`, `didn't use`,
+#: `never enabled`, `not ours`. Matched on every ticket they escalated ordinary documentation
+#: questions as money disputes: "SSO was never enabled on our org, how do I turn it on?" and
+#: "that webhook endpoint is not ours, how do I remove it?" both went to a person with a
+#: handover note telling the engineer the customer was disputing their bill. Anchoring each
+#: phrase to a charge gives the rule its context without scoping it to an intent, so a
+#: misclassified dispute is still caught — the same reasoning as D-42 for the money rule.
+DISPUTE_TRIGGERS = (
+    "do not believe we use", "don't believe we use",
+    "do not believe we used", "don't believe we used",
+    "did not order", "didn't order", "never ordered", "never signed up",
+    "do not recognise", "don't recognise", "do not recognize", "don't recognize",
+    "should not be charged", "shouldn't be charged", "should not have been charged",
+    "charged twice", "charged us twice", "charged me twice",
+    "billed twice", "billed us twice", "billed me twice",
+    "double charged", "double billed", "duplicate charge", "duplicate invoice",
+    "still being billed", "still billed for",
+    "overcharged", "over charged", "incorrect charge", "wrong charge",
+    "charge is not ours", "charges are not ours", "line is not ours",
+)
+
+#: FR-09 §3 rule 7 (review row R7) and the PRD's open question on data residency. A
+#: `data_residency` ticket asking where **this account's** data lives, or asking for an answer a
+#: compliance, audit, legal or regulatory process will rely on, is asking for a statement about
+#: the account that no article can ground: the documentation describes the general policy.
+#: VAL-0037 ("Are backups replicated outside our primary region? A compliance review has raised
+#: this and I need a definite answer") was auto-answered and is labelled escalate.
+#:
+#: Scoped to the intent, not matched on the words alone: "our deployment keeps failing" says
+#: "our" and is a deployment question, and a rule that read every "our" as a compliance request
+#: would escalate most of the corpus (T-R7-4b).
+DATA_RESIDENCY_INTENT = "data_residency"
+ACCOUNT_SPECIFIC_TRIGGERS = (
+    "our data", "our backups", "our logs", "our records", "our account",
+    "this account", "our primary region", "our region", "our customer data",
+    "where is our", "our files",
+)
+
+#: Phrases naming a **process**, not product nouns. `audit` on its own matched "how long is the
+#: retention period for audit records", which is a question about a product feature and is
+#: labelled answerable — the same mistake D-17 found in the injection markers and D-51 in the
+#: phone matcher: a bare word is the wrong unit. `auditor` still matches `auditors` through the
+#: plural rule, so the people are caught without the noun.
+#:
+#: `gdpr` and `definite answer` were here and are not any more, for the same reason: GDPR is a
+#: product-policy noun ("is GDPR covered by the standard terms?") and a definite answer is
+#: impatience. Both escalated the general policy questions FR-09 §3.7 promises to answer.
+#: VAL-0037 still escalates — it carries `compliance review` and `our primary region` too.
+COMPLIANCE_TRIGGERS = (
+    "compliance", "compliance review", "compliance team", "for compliance",
+    "auditor", "being audited", "audit requires", "audit asks", "audit is asking",
+    "regulator", "regulatory requirement", "legal review", "legal team",
+    "data protection officer", "attestation",
+    # `written confirmation` / `in writing` are deliberately **not** here, and this is the one
+    # place R7's implementation is narrower than a reviewer suggested. A request for a written
+    # statement is the archetype of "compliance-grade", and adding it would catch 6 tickets the
+    # labels agree should escalate — but 17 tickets in the supplied data say it and **11 are
+    # labelled answerable**, so it would buy 6 agreements for 11 disagreements. The author's
+    # decision in R7 did not list it, and inventing a phrase that costs label agreement is not
+    # mine to do. The measurement is in the row's PROGRESS entry for R13 to act on.
+)
+
 #: FR-03 §3.2, verbatim. These target a commitment *we* would be making; a factual date question
 #: ("when does my billing period end") matches none of them and stays answerable.
 DATE_TRIGGERS = (
@@ -72,10 +143,18 @@ PRECEDENCE = (
     "malformed_ticket",                 # FR-07
     "must_escalate_intent",             # FR-09
     "money_commitment_requested",       # FR-03
+    # R7: below the commitment rule, so every rank D-16 and FR-02 §3 already wrote down keeps
+    # its place. A ticket that both asks for a refund and disowns the charge is more usefully
+    # logged as the refund request; `all_reasons` keeps both.
+    "money_decision_required",          # FR-03 §3.1b
     "date_commitment_requested",        # FR-03
     # D-42: below the money and date rules, so every rank D-16, FR-02 §3 and FR-12 §3.4 already
     # wrote down keeps its place. A refund request from a ticket the classifier could not place is
     # more usefully logged as a refund request than as an unrecognised intent.
+    # R7: a compliance-grade data question is a statement about the account that no article can
+    # ground. Below the commitment rules, above `unknown_intent` — a ticket the classifier could
+    # not place is less informative than one it placed as data_residency.
+    "compliance_data_question",         # FR-09 §3 rule 7, PRD open question
     "unknown_intent",                   # FR-09 §4
     "text_truncated",                   # FR-07, D-14
     "no_retrieval",                     # FR-10
@@ -101,6 +180,12 @@ EXPLANATIONS = {
     "money_commitment_requested":
         "The customer asks for money back or another billing commitment, which only a person can "
         "promise.",
+    "money_decision_required":
+        "The customer says a charge is wrong or not theirs, which is a dispute and only a person "
+        "can settle it.",
+    "compliance_data_question":
+        "The customer asks where this account's data is held, or needs the answer for a "
+        "compliance or legal process, which only a person can confirm.",
     "date_commitment_requested":
         "The customer asks us to commit to a date, which only a person can give.",
     "text_truncated": "The ticket was too long to read in full, so a person reads the rest.",
@@ -133,6 +218,8 @@ REASON_REQUIREMENTS = {
     "must_escalate_intent": ("FR-09", "FR-08"),
     "unknown_intent": ("FR-09", "FR-08"),
     "money_commitment_requested": ("FR-03",),
+    "money_decision_required": ("FR-03",),
+    "compliance_data_question": ("FR-09", "FR-08"),
     "date_commitment_requested": ("FR-03",),
     "text_truncated": ("FR-07",),
     "no_retrieval": ("FR-10",),
@@ -245,10 +332,24 @@ class Router:
 
         text = ticket.text or ""
         for reason, table in (("money_commitment_requested", MONEY_TRIGGERS),
+                              ("money_decision_required", DISPUTE_TRIGGERS),
                               ("date_commitment_requested", DATE_TRIGGERS)):
             matched = matches_triggers(text, table)
             if matched:
                 fired[reason] = "matched triggers: " + ", ".join(matched)
+
+        # R7: scoped to the intent. The words alone would escalate most of the corpus — "our
+        # deployment keeps failing" says "our" and is a deployment question (T-R7-4b).
+        if intent == DATA_RESIDENCY_INTENT:
+            account = matches_triggers(text, ACCOUNT_SPECIFIC_TRIGGERS)
+            compliance = matches_triggers(text, COMPLIANCE_TRIGGERS)
+            if account or compliance:
+                parts = []
+                if account:
+                    parts.append("account-specific: " + ", ".join(account))
+                if compliance:
+                    parts.append("compliance: " + ", ".join(compliance))
+                fired["compliance_data_question"] = "; ".join(parts)
 
         if "text_truncated" in ticket.defects:
             fired["text_truncated"] = "the ticket text was longer than the cap and was cut"

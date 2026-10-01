@@ -1105,10 +1105,11 @@ def _escalation_confidence(results: list[TicketResult], answered: list[TicketRes
         return (f"{base}; the kill switch is on (FR-16), so every ticket escalates by "
                 f"construction and this is not a tuning result")
     if not answered and results:
+        not_tuning = _not_a_tuning_result()
         forced = sum(count for reason, count in reasons.items()
-                     if reason in _NOT_A_TUNING_RESULT)
+                     if reason in not_tuning)
         if forced == len(results):
-            dominant = max(((r, c) for r, c in reasons.items() if r in _NOT_A_TUNING_RESULT),
+            dominant = max(((r, c) for r, c in reasons.items() if r in not_tuning),
                            key=lambda pair: pair[1])[0]
             return (f"{base}; every ticket escalated on a rule or a failure rather than on the "
                     f"threshold ({dominant} dominates), so this is not a tuning result")
@@ -1118,14 +1119,24 @@ def _escalation_confidence(results: list[TicketResult], answered: list[TicketRes
     return base
 
 
-#: Reasons that make an escalation a construction rather than a tuning outcome: a rule fired,
-#: a component failed, or the provider was unreachable. None of them is a threshold decision.
-_NOT_A_TUNING_RESULT = frozenset({
-    "kill_switch", "must_escalate_intent", "money_commitment_requested",
-    "date_commitment_requested", "private_data_in_ticket", "instruction_injection_detected",
-    "malformed_ticket", "unknown_intent", "text_truncated", "provider_unavailable",
-    "pipeline_error", "retrieval_unavailable", "pipeline_incomplete",
+#: Reasons that make an escalation a *threshold* decision rather than a construction. Everything
+#: else in `PRECEDENCE` is a rule or a failure, so the set below is derived rather than listed:
+#: R7 added two routing reasons and this frozenset was a second, hand-maintained copy that did
+#: not get them — the D-18 shape, in the file whose own row (R4) was about figures contradicting
+#: each other. `T-R7-6` holds the derivation against `PRECEDENCE`.
+_TUNING_REASONS = frozenset({"low_confidence", "no_retrieval"})
+#: Plus the reasons no routing table owns: a component failed, or the provider was unreachable.
+_FAILURE_REASONS = frozenset({
+    "provider_unavailable", "pipeline_error", "retrieval_unavailable", "pipeline_incomplete",
+    "drafting_failed", "guardrails_failed", "handover_failed", "guardrails_did_not_run",
 })
+
+
+def _not_a_tuning_result() -> frozenset[str]:
+    """Every escalation reason that is a rule or a failure, not the threshold doing its work."""
+    from ticketing_agent.route import PRECEDENCE
+
+    return frozenset(set(PRECEDENCE) - _TUNING_REASONS) | _FAILURE_REASONS
 
 
 def _gaps(results: list[TicketResult], answered: list[TicketResult],
