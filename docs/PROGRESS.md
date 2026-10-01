@@ -1900,3 +1900,65 @@ measurement in D-72 for R13. Inventing a rule that costs label agreement is not 
   question labelled `auto_respond`. The rule cannot satisfy both.
 
 `uv run pytest -q` → **636 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R8 · No figure a gate run produces is evidence about generalisation (FR-08, NFR-03)
+
+The gate reported **100% per-class precision and recall**. 62 of the 80 validation bodies are identical to
+a development ticket the classifier was trained on, and the cross-validated development figures put 3 of
+22 intents **below** NFR-03's 85%. The report said nothing about which of those it was measuring.
+
+**Files changed.** `evaluation/harness.py`, `src/ticketing_agent/classify.py` (`wording_clusters` made
+public), `tests/test_fr14_harness.py`, `docs/specs/FR-14.md` §4 and items 59–67, `docs/specs/FR-08.md`
+§2. D-73.
+
+**Tests added (11).** `test_T_R8_1` … `_9`. **647 passing.**
+
+### What running it changed about the conclusion
+
+The split does **not** show the classifier is worse than reported: the 18 unseen-body tickets also score
+100%. What it shows is that an exact-body comparison badly overstates "unseen". Under D-39's own 0.85
+clustering — the threshold the classifier's cross-validation already groups its folds by — **14 of the 18
+are paraphrases of a training body, leaving 4**: VAL-0003, VAL-0004, VAL-0046, VAL-0073.
+
+So the honest finding is not "the classifier is weaker than the gate says" but "**the gate cannot speak to
+this at all**", and a 100% figure over four tickets supports nothing in either direction. The report now
+says that in those words and points at `classifier_calibration.md`, whose grouped cross-validation over 96
+wording clusters is the figure NFR-03 turns on — 88.6% overall, 3 of 22 classes below 85%.
+
+### The review found two highs, and both were about tests of mine that could not fail
+
+1. **The row's actual deliverable — the per-group per-class figures — was untested.** Two single-line
+   mutations left all 643 tests green: dropping the group filter, and not computing the per-group table at
+   all. My fixture's four tickets were all labelled `billing_query`, so the seen and unseen blocks were
+   numerically identical. With the filter gone both rows would print the whole-run in-sample figure under
+   a heading saying "unseen" — the exact overstatement this row exists to remove, invisible to CI and to a
+   reader. That is the **fifth** appearance of this shape in this backlog. `T-R8-1b` uses a classifier
+   that is right on every seen body and wrong on every unseen one, so the blocks read 100% and 0% while
+   the whole-run figure reads 50%.
+2. **`assert "classifier_calibration.md" in markdown` could not fail**: the string is already emitted
+   twice by pre-existing report text, so pointing `CALIBRATION_REPORT` at a nonexistent file left all
+   seven R8 tests green. It is asserted inside the R8 section now.
+
+### Five mediums
+
+The markdown read backwards — it stated the novel *count* and then listed the 14 **paraphrase** ids, which
+reads as though those were the novel ones, and never named the 4 ids a human actually acts on. The
+clustering's "one id per input in input order" contract, which the harness zips against its own list, was
+pinned by nothing: a sorted return preserves the length so `zip(strict=True)` cannot catch it, and the
+report would have named the wrong tickets with plausible counts. The report declared a headline while the
+per-class section above it still printed the whole-run figure with no pointer to the split. The clustering
+was uncapped O(n²) difflib (~20 s at 4,000 bodies) inside the block whose failure costs a *completed* run
+its report. And the printed `0.85` was a literal beside a call that used the function's default, so
+changing the default would have left the report making a false statement about its own measurement.
+
+### And a justification of mine that was not evidence
+
+I had written that the normalised-body key was needed because DEV-0106 and VAL-0037 differ "only in case
+and whitespace". They do not — VAL-0037 inserts two articles and drops a sentence — so normalising does
+not merge them, and on the real corpus a raw-string comparison gives the same 62/18 split. The
+normalisation is kept because it is the right key for a file nobody has seen, and the docstring now says
+that instead of citing a pair that does not support it.
+
+`uv run pytest -q` → **647 passed**. `uv run ruff check .` → clean.

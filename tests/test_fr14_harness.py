@@ -1750,3 +1750,321 @@ def test_T_R7_6_the_not_a_tuning_result_set_is_derived_not_copied(tmp_path):
     cell = {row["measure"]: row for row in report.metrics["results_table"]}["Escalation rate"]
     assert "not a tuning result" in cell["confidence"]
     assert "money_decision_required" in cell["confidence"]
+
+
+# --- R8: classification on wording the classifier has not seen ---------------------------
+
+
+def training_file(tmp_path, bodies, name="training.json"):
+    """A stand-in training file: only the bodies matter for the seen/unseen split."""
+    path = tmp_path / name
+    path.write_text(json.dumps([
+        {"ticket_id": f"TRN-{n:03d}", "channel": "email", "subject": "Invoice question",
+         "body": body, "received_at": "2026-04-01T09:00:00Z",
+         "labels": {"intent": "billing_query"}}
+        for n, body in enumerate(bodies)]), encoding="utf-8")
+    return path
+
+
+class WrongOnUnseen:
+    """Right on every seen body, wrong on every unseen one.
+
+    R8 review (high): T-R8-1's four tickets were all labelled `billing_query`, so the seen and
+    unseen per-class blocks were numerically identical — dropping the group filter, or not
+    computing the per-group table at all, left the whole suite green while the report printed
+    the in-sample figure under a heading that says "unseen". That is the fifth appearance of
+    this shape in this backlog, and the figure it would have falsified is the one R8 exists to
+    produce.
+    """
+
+    def __init__(self, seen_bodies):
+        self.seen = {" ".join(b.split()).casefold() for b in seen_bodies}
+
+    def process(self, ticket):
+        key = " ".join((ticket.body or "").split()).casefold()
+        predicted = "billing_query" if key in self.seen else "rate_limit"
+        return Outcome(ticket=ticket, decision="escalate", reason="low_confidence",
+                       explanation="To a person.", all_reasons=("low_confidence",),
+                       threshold_applied=0.85, summary="s", uncertainty="u",
+                       prediction_value=predicted, intent=predicted,
+                       intent_confidence=0.9, requirement_ids=("FR-14",))
+
+
+def test_T_R8_1b_the_per_group_figures_are_the_groups_own(tmp_path):
+    """R8 review (high): the row's actual deliverable, and nothing tested it.
+
+    Every ticket is labelled `billing_query`. The classifier is right on the two seen bodies
+    and wrong on the two unseen ones, so the seen block must read 100% and the unseen block 0%.
+    If the group filter is dropped, both read 50% and this fails.
+    """
+    seen_a, seen_b = "Where is the invoice breakdown?", "Why did my plan change?"
+    unseen_a, unseen_b = "How do I rotate a webhook secret?", "Can I export last year's logs?"
+    source = tmp_path / "groups.json"
+    source.write_text(json.dumps([
+        {"ticket_id": tid, "channel": "email", "subject": "Question", "body": body,
+         "received_at": "2026-05-01T09:00:00Z", "labels": {"intent": "billing_query"}}
+        for tid, body in (("G-SEEN-1", seen_a), ("G-SEEN-2", seen_b),
+                          ("G-NEW-1", unseen_a), ("G-NEW-2", unseen_b))
+    ]), encoding="utf-8")
+
+    report = harness(tmp_path, WrongOnUnseen([seen_a, seen_b]), input_path=source,
+                     training_tickets_path=training_file(tmp_path, [seen_a, seen_b]))
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    seen = split["seen_in_training"]["classification"]
+    unseen = split["unseen_wording"]["classification"]
+    assert seen["overall_accuracy_pct"] == 100.0, seen
+    assert unseen["overall_accuracy_pct"] == 0.0, unseen
+    assert seen["overall_accuracy_pct"] != unseen["overall_accuracy_pct"], (
+        "a fixture where the two groups score the same cannot test the split at all")
+    assert split["seen_in_training"]["scored"] == 2
+    assert split["unseen_wording"]["scored"] == 2
+
+    # And the whole-run figure sits between them, which is the overstatement R8 removes.
+    whole = report.metrics["technical"]["classification"]
+    assert whole["overall_accuracy_pct"] == 50.0
+
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    rows = [ln for ln in markdown.splitlines() if ln.startswith("| **unseen body")]
+    assert rows and "0.0%" in rows[0], rows
+
+
+def test_T_R8_1_the_split_counts_seen_and_unseen_wording(tmp_path):
+    """R8 (FR-08, NFR-03): the gate reports 100% per-class precision on mostly-seen wording.
+
+    62 of the 80 validation bodies are identical to a development ticket the classifier was
+    trained on, and the cross-validated development figures show 3 of 22 intents **below**
+    NFR-03's 85%. A headline of 100% measured on near-duplicate lookup is not evidence of
+    generalisation, and the report said nothing about which it was.
+    """
+    seen_a, seen_b = "Where is the invoice breakdown?", "Why did my plan change?"
+    unseen_a, unseen_b = "How do I rotate a webhook secret?", "Can I export last year's logs?"
+    source = tmp_path / "mixed.json"
+    source.write_text(json.dumps([
+        {"ticket_id": tid, "channel": "email", "subject": "Question", "body": body,
+         "received_at": "2026-05-01T09:00:00Z", "labels": {"intent": "billing_query"}}
+        for tid, body in (("M-SEEN-1", seen_a), ("M-SEEN-2", seen_b),
+                          ("M-NEW-1", unseen_a), ("M-NEW-2", unseen_b))
+    ]), encoding="utf-8")
+
+    report = harness(
+        tmp_path, DecideByTicket(answer={"M-SEEN-1", "M-SEEN-2", "M-NEW-1", "M-NEW-2"}),
+        input_path=source,
+        training_tickets_path=training_file(tmp_path, [seen_a, seen_b, "Something else"]))
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    assert split["seen_in_training"]["tickets"] == 2
+    assert split["unseen_wording"]["tickets"] == 2
+    assert split["headline"] == "unseen_wording", (
+        "the honest figure is the one measured on wording the model has not seen")
+    assert split["seen_in_training"]["ticket_ids"] == ["M-SEEN-1", "M-SEEN-2"]
+    assert split["unseen_wording"]["ticket_ids"] == ["M-NEW-1", "M-NEW-2"]
+    assert split["training_file"].endswith("training.json")
+    assert split["training_bodies"] == 3
+
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "seen in training" in markdown.lower()
+    # In the R8 section itself. The string already appears twice in every report from
+    # pre-existing text, so asserting it against the whole document could not fail — setting
+    # CALIBRATION_REPORT to a nonexistent path left all seven R8 tests green.
+    section = markdown[markdown.index("### Classification by wording"):]
+    section = section[:section.index("### Answered against the labels")]
+    assert "classifier_calibration.md" in section, (
+        "R8 asks the report to reference the cross-validated figures, which are the honest ones")
+    assert "bear on NFR-03" in section
+
+
+def test_T_R8_2_a_missing_training_file_says_the_split_could_not_be_made(tmp_path):
+    """R8: and the run still completes. A figure that cannot be split says so (D-15)."""
+    report = harness(tmp_path, DecideByTicket(answer={"ANS-000"}),
+                     input_path=answerable_file(tmp_path, count=2, labelled=True))
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    assert report.exit_code == 0
+    assert split["not_computable"], split
+    assert "TRAINING_TICKETS_PATH" in split["not_computable"]
+    assert "seen_in_training" not in split
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "could not be made" in markdown
+
+
+def test_T_R8_2b_a_training_file_that_cannot_be_read_does_not_fail_the_run(tmp_path):
+    """The split is a reporting nicety; losing a run to it would be absurd."""
+    broken = tmp_path / "broken-training.json"
+    broken.write_text("{not json", encoding="utf-8")
+
+    report = harness(tmp_path, DecideByTicket(answer={"ANS-000"}),
+                     input_path=answerable_file(tmp_path, count=2, labelled=True),
+                     training_tickets_path=broken)
+
+    assert report.exit_code == 0
+    assert report.metrics["technical"]["classification_by_wording"]["not_computable"]
+
+
+def test_T_R8_3_the_split_is_on_the_normalised_body_not_the_raw_string(tmp_path):
+    """Whitespace and case are not wording. DEV-0106 and VAL-0037 differ only in those.
+
+    The real corpus pairs differ by capitalisation and spacing — "are backups replicated
+    outside our primary region? compliance review has raised this" against "Are backups
+    replicated outside our primary region? A compliance review has raised this". A raw-string
+    comparison would call those unseen and hand back the same flattering 100%.
+    """
+    trained = "Where is the invoice breakdown?"
+    source = tmp_path / "casing.json"
+    source.write_text(json.dumps([
+        {"ticket_id": "C-1", "channel": "email", "subject": "Q",
+         "body": "  WHERE is   the Invoice breakdown?  ",
+         "received_at": "2026-05-01T09:00:00Z", "labels": {"intent": "billing_query"}},
+    ]), encoding="utf-8")
+
+    report = harness(tmp_path, DecideByTicket(answer={"C-1"}), input_path=source,
+                     training_tickets_path=training_file(tmp_path, [trained]))
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    assert split["seen_in_training"]["tickets"] == 1, (
+        "case and whitespace are not wording; this body was in the training set")
+    assert split["unseen_wording"]["tickets"] == 0
+
+
+def test_T_R8_4_the_real_validation_set_is_mostly_seen_wording(tmp_path):
+    """R8's evidence, re-measured through the harness rather than quoted."""
+    report = harness(tmp_path, DecideByTicket(answer=set()), input_path=VALIDATION,
+                     training_tickets_path=ROOT / "data" / "development_tickets.json")
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    assert split["seen_in_training"]["tickets"] == 62, (
+        "the row's evidence: 62 of 80 validation bodies are in the development set")
+    assert split["unseen_wording"]["tickets"] == 18
+    assert split["seen_pct"] == 77.5
+
+
+def test_T_R8_5_an_unseen_body_that_is_a_paraphrase_is_not_novel_wording(tmp_path):
+    """R8, found by running it: the exact-body split overstates "unseen" badly.
+
+    On the real validation set it reports 18 unseen bodies — and 14 of those are
+    near-duplicates of a development body under D-39's 0.85 clustering, leaving **4** with
+    genuinely novel wording. A 100% figure over 4 tickets supports nothing, and the first
+    version of this split presented the 18 as if it did.
+    """
+    trained = "Our deployment fails at the health check stage every time."
+    source = tmp_path / "paraphrase.json"
+    source.write_text(json.dumps([
+        # not in the training file, but plainly the same sentence
+        {"ticket_id": "P-NEAR", "channel": "email", "subject": "Deploy",
+         "body": "Our deployment fails at the health check stage every single time.",
+         "received_at": "2026-05-01T09:00:00Z", "labels": {"intent": "deployment_failure"}},
+        # nothing like it
+        {"ticket_id": "P-NOVEL", "channel": "email", "subject": "Export",
+         "body": "When I page through results I see some records twice and miss others.",
+         "received_at": "2026-05-01T09:00:00Z", "labels": {"intent": "data_export"}},
+    ]), encoding="utf-8")
+
+    report = harness(tmp_path, DecideByTicket(answer=set()), input_path=source,
+                     training_tickets_path=training_file(tmp_path, [trained]))
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    assert split["unseen_wording"]["tickets"] == 2, "neither body is in the training file"
+    assert split["unseen_but_near_duplicate"]["ticket_ids"] == ["P-NEAR"]
+    assert split["genuinely_novel_wording"] == 1
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "genuinely novel wording" in markdown
+    assert "Paraphrases: P-NEAR." in markdown
+    assert "**1 ticket(s) use genuinely novel wording**: P-NOVEL." in markdown, (
+        "the ids a human acts on are the novel ones, and the first version of this section "
+        "listed the paraphrase ids directly after the novel *count*")
+
+
+def test_T_R8_6_the_real_validation_set_has_almost_no_novel_wording(tmp_path):
+    """The measurement that makes R8's point: 62 seen, 18 unseen bodies, 4 novel wordings."""
+    report = harness(tmp_path, DecideByTicket(answer=set()), input_path=VALIDATION,
+                     training_tickets_path=ROOT / "data" / "development_tickets.json")
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    assert split["seen_in_training"]["tickets"] == 62
+    assert split["unseen_wording"]["tickets"] == 18
+    assert split["unseen_but_near_duplicate"]["tickets"] == 14
+    assert split["genuinely_novel_wording"] == 4, (
+        "so no figure this run reports is evidence about generalisation; the cross-validated "
+        "development figures, over 96 wording clusters, are")
+
+
+def test_T_R8_7_the_clustering_returns_one_id_per_input_in_input_order(tmp_path):
+    """R8 review (medium): `_near_duplicates_of_training` depends on that and nothing said so.
+
+    Wrapping `wording_clusters`'s return in `sorted(...)` passed the entire suite — `len()` is
+    preserved, so `zip(..., strict=True)` cannot catch it — and the report would then name the
+    wrong tickets as paraphrases while the counts stayed plausible. Named ids in a report a
+    human acts on is R6's whole reason for existing.
+    """
+    from ticketing_agent.classify import wording_clusters
+
+    texts = ["zebra wording that matches nothing else here",
+             "alpha wording about deployments failing at the health check",
+             "alpha wording about deployments failing at the health checks",
+             "beta wording about invoices and proration entirely"]
+    clusters = wording_clusters(texts)
+
+    assert len(clusters) == len(texts), "one id per input"
+    assert clusters[1] == clusters[2], "the two alpha wordings are one cluster"
+    assert clusters[0] != clusters[1] != clusters[3]
+    # Input order, not sorted order: the first text sorts last alphabetically, so a sorted
+    # return would move its id away from position 0.
+    assert clusters[0] != min(clusters) or len(set(clusters)) == 1, (
+        "this fixture is chosen so a sorted return is observable")
+
+    # Duplicated inputs keep their positions too.
+    repeated = wording_clusters([texts[3], texts[0], texts[3]])
+    assert repeated[0] == repeated[2] != repeated[1]
+
+
+def test_T_R8_8_past_the_cap_the_split_is_skipped_and_the_run_still_reports(tmp_path,
+                                                                           monkeypatch):
+    """R8 review (medium): O(n²) difflib inside the block whose failure costs the report.
+
+    Measured ~20 s at 4,000 bodies and quadratic beyond, and `_metrics` runs inside `run`'s
+    "the report could not be written" guard. The input is a file nobody has seen and the
+    training file is operator-configured, so both scale this.
+    """
+    import evaluation.harness as module
+
+    monkeypatch.setattr(module, "MAX_CLUSTERED_BODIES", 1)
+    report = harness(tmp_path, DecideByTicket(answer=set()),
+                     input_path=answerable_file(tmp_path, count=2, labelled=True),
+                     training_tickets_path=training_file(tmp_path, ["something unrelated",
+                                                                    "and another thing"]))
+    split = report.metrics["technical"]["classification_by_wording"]
+
+    assert report.exit_code == 0, "a reporting nicety must not cost the run its report"
+    assert split["unseen_but_near_duplicate"]["skipped"], split
+    assert "cap" in split["unseen_but_near_duplicate"]["skipped"]
+    assert split["unseen_but_near_duplicate"]["tickets"] == 0
+    # The exact-body split still stands; only the paraphrase refinement is absent.
+    assert split["unseen_wording"]["tickets"] == 2
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "clustering was skipped" in markdown
+
+
+def test_T_R8_9_the_reported_threshold_is_the_one_that_was_applied(tmp_path):
+    """R8 review (medium): the report printed a literal 0.85 beside a call using the default.
+
+    Changing `wording_clusters`'s default left all tests green and the report still claiming
+    0.85 — a false statement about the measurement.
+    """
+    import inspect
+
+    from evaluation.harness import WORDING_THRESHOLD
+    from ticketing_agent.classify import wording_clusters
+
+    report = harness(tmp_path, DecideByTicket(answer=set()),
+                     input_path=answerable_file(tmp_path, count=2, labelled=True),
+                     training_tickets_path=training_file(tmp_path, ["unrelated wording"]))
+    split = report.metrics["technical"]["classification_by_wording"]
+    assert split["unseen_but_near_duplicate"]["threshold"] == WORDING_THRESHOLD
+
+    # And the harness passes it explicitly rather than relying on the default, so the two
+    # cannot part company.
+    source = inspect.getsource(inspect.getmodule(wording_clusters))
+    assert "threshold=WORDING_THRESHOLD" in inspect.getsource(
+        __import__("evaluation.harness", fromlist=["_near_duplicates_of_training"])
+        ._near_duplicates_of_training), "the threshold must be passed, not defaulted"
+    assert source, "classify is importable"

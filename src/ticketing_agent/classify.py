@@ -538,6 +538,21 @@ def order_escalation_queue(items: list[dict[str, Any]]) -> tuple[dict[str, Any],
     return tuple(item for _, item in sorted(enumerate(items), key=key))
 
 
+def wording_clusters(texts: list[str], threshold: float = 0.85) -> list[str]:
+    """FR-08, D-39: this project's definition of "same wording", for anything that needs it.
+
+    Returns **one cluster id per input, in input order**. The FR-14 harness zips the result
+    against its own list to name which tickets are paraphrases, so reordering the return would
+    keep the counts plausible and name the wrong tickets (T-R8-7).
+
+    Public because the FR-14 harness needs it (review row R8): an exact-body comparison said 18
+    of the 80 validation tickets used unseen wording, and 14 of those 18 are near-duplicates of
+    a development body under this threshold. Two implementations of "same wording" would give
+    two answers to the same question (D-18).
+    """
+    return _near_duplicate_groups(texts, threshold)
+
+
 # --- internals ------------------------------------------------------------------------
 
 

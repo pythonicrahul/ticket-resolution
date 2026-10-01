@@ -389,7 +389,7 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
 
     governance = _governance(results, reconciliation)
     latency = _latency(latencies, [r.latency_ms for r in answered], governance, stub)
-    technical = _technical(results, scored, latencies, answered)
+    technical = _technical(results, scored, latencies, answered, settings)
     segments = _segments(results)
     reasons = _counts(r.outcome.reason or "none" for r in results)
 
@@ -561,7 +561,8 @@ def _business(results: list[TicketResult], answered: list[TicketResult],
 
 
 def _technical(results: list[TicketResult], scored: list[TicketResult],
-               latencies: list[float], answered: list[TicketResult]) -> dict[str, Any]:
+               latencies: list[float], answered: list[TicketResult],
+               settings: Settings | None = None) -> dict[str, Any]:
     predictions = [(r.labels.get("intent"), r.outcome.prediction_value)
                    for r in scored if r.outcome.prediction_value]
     retrieval = [r for r in scored if r.labels.get("expected_doc_ids")]
@@ -578,6 +579,7 @@ def _technical(results: list[TicketResult], scored: list[TicketResult],
                            {"not_computable": _why_no_classification(results, scored)}),
         "calibration": _calibration(scored),
         "answered_against_the_labels": _against_the_labels(scored, answered),
+        "classification_by_wording": _by_wording(results, scored, settings),
         "retrieval_hit_rate_pct": _pct(hits, len(retrieval)) if retrieval else None,
         "retrieval_scored_tickets": len(retrieval),
         "route_agreement_pct": _pct(agreed, len(route_agreement)) if route_agreement else None,
@@ -761,6 +763,154 @@ def _doc_of(citation: str) -> str:
     otherwise produce a disagreement that is a formatting artefact and not a disagreement.
     """
     return citation.strip().split("#", 1)[0]
+
+
+#: R8: the honest figure is the one measured on wording the classifier has not seen.
+UNSEEN = "unseen_wording"
+SEEN = "seen_in_training"
+#: Where the cross-validated figures live. Referenced in the report because they are the ones
+#: that bear on NFR-03, and because 3 of 22 intents are below 85% in them.
+CALIBRATION_REPORT = "evaluation/reports/classifier_calibration.md"
+
+
+#: D-39's clustering threshold, read from the function that applies it rather than restated.
+#: The report prints this number, and a literal `0.85` beside a call that used the function's
+#: own default would have gone on printing 0.85 after the default changed.
+WORDING_THRESHOLD = 0.85
+
+
+def _normalised_body(text: str) -> str:
+    """The comparison key for "is this wording in the training set?".
+
+    Case-folded with runs of whitespace collapsed, because case and spacing are not wording.
+
+    **On the real corpus this changes nothing**: a raw-string comparison gives the same 62/18
+    split. An earlier version of this docstring justified the normalisation with DEV-0106 and
+    VAL-0037, claiming they differ only in case and spacing — they do not (VAL-0037 inserts two
+    articles and drops a sentence), and normalising does not merge them. The normalisation is
+    kept because it is the right key for a file nobody has seen, not because it earns its place
+    on this data; `T-R8-3` is the only thing that exercises it.
+    """
+    return " ".join((text or "").split()).casefold()
+
+
+def _by_wording(results: list[TicketResult], scored: list[TicketResult],
+                settings: Settings | None) -> dict[str, Any]:
+    """FR-08, NFR-03, R8: classification split by whether the classifier has seen the wording.
+
+    The gate reported **100% per-class precision and recall** while 62 of the 80 validation
+    bodies were identical to a development ticket the classifier was trained on. The
+    cross-validated development figures in `evaluation/reports/classifier_calibration.md` put
+    **3 of 22 intents below NFR-03's 85%**. A headline measured on near-duplicate lookup is not
+    evidence of generalisation, and the report said nothing about which it was.
+
+    The training file comes from configuration (`TRAINING_TICKETS_PATH`), never a hardcoded
+    name (CLAUDE.md). Absent or unreadable, the split says so and the run completes: this is a
+    reporting nicety and losing a run to it would be absurd.
+    """
+    path = getattr(settings, "training_tickets_path", None) if settings else None
+    if path is None:
+        return {"not_computable": (
+            "TRAINING_TICKETS_PATH is not set, so the harness cannot tell which wording the "
+            "classifier was trained on. The cross-validated figures in "
+            f"`{CALIBRATION_REPORT}` are the ones that bear on NFR-03.")}
+    try:
+        trained = {_normalised_body(t.body) for t in load_tickets(Path(path))}
+    except (TicketFileError, OSError) as exc:
+        return {"not_computable": (
+            f"the training file at {path} could not be read ({type(exc).__name__}), so the "
+            f"split could not be made. TRAINING_TICKETS_PATH points at it.")}
+
+    buckets: dict[str, list[TicketResult]] = {SEEN: [], UNSEEN: []}
+    for result in results:
+        key = SEEN if _normalised_body(result.ticket.body) in trained else UNSEEN
+        buckets[key].append(result)
+
+    near, skipped = _near_duplicates_of_training(buckets[UNSEEN], trained)
+
+    def block(group: list[TicketResult]) -> dict[str, Any]:
+        in_group = {r.ticket.ticket_id for r in group}
+        pairs = [(r.labels.get("intent"), r.outcome.prediction_value)
+                 for r in scored
+                 if r.ticket.ticket_id in in_group and r.outcome.prediction_value]
+        return {
+            "tickets": len(group),
+            "scored": len(pairs),
+            "ticket_ids": sorted(r.ticket.ticket_id for r in group),
+            "classification": _per_class(pairs) if pairs else {
+                "not_computable": "no labelled prediction in this group"},
+        }
+
+    novel = len(buckets[UNSEEN]) - len(near)
+    return {
+        "training_file": str(path),
+        "training_bodies": len(trained),
+        "headline": UNSEEN,
+        "seen_pct": _pct(len(buckets[SEEN]), len(results)),
+        SEEN: block(buckets[SEEN]),
+        UNSEEN: block(buckets[UNSEEN]),
+        # The number that actually matters, and it is much smaller than the one above.
+        "unseen_but_near_duplicate": {
+            "tickets": len(near),
+            "ticket_ids": sorted(near),
+            "threshold": WORDING_THRESHOLD,
+            "skipped": skipped,
+        },
+        "genuinely_novel_wording": novel,
+        "genuinely_novel_ticket_ids": sorted(
+            r.ticket.ticket_id for r in buckets[UNSEEN] if r.ticket.ticket_id not in set(near)),
+        "note": (
+            f"The headline classification figure is the **{UNSEEN}** one: a score measured on "
+            f"wording the classifier was trained on is near-duplicate lookup, not "
+            f"generalisation. **But an exact-body comparison overstates it**: of the "
+            f"{len(buckets[UNSEEN])} tickets whose body is not in the training file, "
+            f"{len(near)} fall in a wording cluster that contains a training body under D-39's "
+            f"{WORDING_THRESHOLD} clustering — the clusters are transitive, so this counts a "
+            f"paraphrase of a paraphrase, which errs toward calling wording seen. That leaves "
+            f"**{novel}** with genuinely novel wording, and a figure over {novel} ticket(s) "
+            f"supports nothing either way. The cross-validated figures in "
+            f"`{CALIBRATION_REPORT}` group their folds by wording cluster over the whole "
+            f"development set and are the ones that bear on NFR-03."),
+    }
+
+
+#: Above this many distinct bodies the clustering is skipped. It is O(n²) difflib — measured
+#: 0.08 s at 233 texts, 1.3 s at 1,000, 5 s at 2,000, 20 s at 4,000 — and it runs inside the
+#: block whose failure costs a completed run its report (`run`'s "the report could not be
+#: written"). A reporting nicety must not be able to do that, so past the cap the split says it
+#: was skipped and the run finishes.
+MAX_CLUSTERED_BODIES = 3000
+
+
+def _near_duplicates_of_training(unseen: list[TicketResult],
+                                 trained: set[str]) -> tuple[list[str], str | None]:
+    """Which 'unseen' tickets are really paraphrases of a training body (R8).
+
+    Uses `classify.wording_clusters` — D-39's own definition of "same wording", the one the
+    classifier's cross-validation groups its folds by — rather than a second implementation.
+
+    Returns the ids and, when the clustering was skipped, the reason. Note that D-39's clusters
+    are **transitive**: an unseen ticket reachable from a training body through another unseen
+    ticket is counted here too. That errs toward calling wording seen, which is the
+    self-critical direction, and the report says so.
+    """
+    if not unseen or not trained:
+        return [], None
+    total = len(unseen) + len(trained)
+    if total > MAX_CLUSTERED_BODIES:
+        return [], (f"{total} distinct bodies is past the {MAX_CLUSTERED_BODIES} cap for "
+                    f"near-duplicate clustering, so only the exact-body split is reported")
+    from ticketing_agent.classify import wording_clusters
+
+    bodies = [_normalised_body(r.ticket.body) for r in unseen]
+    training = sorted(trained)
+    # One cluster id per input, in input order — `T-R8-7` pins that contract, because a sorted
+    # or reordered return would keep the counts plausible and name the wrong tickets.
+    clusters = wording_clusters([*bodies, *training], threshold=WORDING_THRESHOLD)
+    training_clusters = set(clusters[len(bodies):])
+    return [r.ticket.ticket_id
+            for r, cluster in zip(unseen, clusters[:len(bodies)], strict=True)
+            if cluster in training_clusters], None
 
 
 def _why_no_classification(results: list[TicketResult],
@@ -1412,6 +1562,14 @@ def _markdown(metrics: dict[str, Any]) -> str:
         "",
         "### Classification, per class",
         "",
+        # R8 review: this table is the whole-run, mostly in-sample figure, and the section
+        # below declares a different one as the headline. Saying so here is the difference
+        # between two figures and two claims.
+        ("*Over every scored ticket in this run, which on the supplied data is mostly wording "
+         "the classifier was trained on. The split by wording is below, and the figure that "
+         "bears on NFR-03 is in* "
+         f"`{CALIBRATION_REPORT}`*.*"),
+        "",
     ]
     classification = technical["classification"]
     if "per_class" in classification:
@@ -1449,6 +1607,53 @@ def _markdown(metrics: dict[str, Any]) -> str:
         ]
     else:
         lines.append(f"*Not computable: {calibration.get('not_computable', 'no data')}*")
+
+    # R8: which figure is the honest one, before the per-class table is read.
+    wording = technical.get("classification_by_wording") or {}
+    lines += ["", "### Classification by wording (R8)", ""]
+    if wording.get("not_computable"):
+        lines.append(f"*The seen/unseen split could not be made: {wording['not_computable']}*")
+    else:
+        lines += [
+            (f"Training wording read from `{wording['training_file']}` "
+             f"({wording['training_bodies']} distinct bodies). "
+             f"**{_fmt(wording['seen_pct'])}** of this run's tickets use wording the classifier "
+             f"was trained on."),
+            "",
+            "| group | tickets | scored | overall accuracy | lowest per-class precision |",
+            "|---|---|---|---|---|",
+        ]
+        for key, label in ((UNSEEN, "**unseen body (the headline)**"),
+                           (SEEN, "seen in training")):
+            block = wording[key]
+            per_class = block["classification"]
+            accuracy = _fmt(per_class.get("overall_accuracy_pct")) if (
+                "per_class" in per_class) else "not computable"
+            floor = _per_class_floor({"classification": per_class})
+            lines.append(f"| {label} | {block['tickets']} | {block['scored']} | {accuracy} "
+                         f"| {_fmt(floor) if floor is not None else '—'} |")
+        near = wording["unseen_but_near_duplicate"]
+        novel_ids = wording["genuinely_novel_ticket_ids"]
+        if near["skipped"]:
+            lines += ["", f"*Near-duplicate clustering was skipped: {near['skipped']}.*"]
+        else:
+            lines += [
+                "",
+                (f"Of the {wording[UNSEEN]['tickets']} tickets with an unseen body, "
+                 f"**{near['tickets']}** are paraphrases of a training body at D-39's "
+                 f"{near['threshold']} clustering."),
+                "",
+                # The ids a human acts on are the novel ones, and the first version of this
+                # section listed the fourteen paraphrase ids directly after the number 4 —
+                # which reads as though those were the novel ones.
+                (f"**{wording['genuinely_novel_wording']} ticket(s) use genuinely novel "
+                 f"wording**"
+                 + (f": {', '.join(novel_ids)}." if novel_ids
+                    else ", so nothing in this run is evidence about unseen wording.")),
+                "",
+                f"Paraphrases: {', '.join(near['ticket_ids']) or '—'}.",
+            ]
+        lines += ["", f"*{wording['note']}*"]
 
     # R6: the ids, in the report a human reads. A count without them cannot be acted on.
     against = technical.get("answered_against_the_labels") or {}

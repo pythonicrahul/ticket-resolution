@@ -1511,3 +1511,40 @@ rule is for, and what the labels call answerable. VAL-0054 matches on its **cann
 is our data stored") rather than its body; DEV-0058 and DEV-0059 carry the identical body under a
 different subject and do not match, so two identical bodies route differently on text the customer did not
 write. That is recorded in FR-09 §7 and belongs to R13.
+
+## D-73 · No figure a gate run produces is evidence about generalisation (FR-08, NFR-03, FR-14)
+
+The gate reported **100% per-class precision and recall**. 62 of the 80 validation bodies are identical to
+a development ticket the classifier was trained on, and the cross-validated development figures put
+**3 of 22 intents below NFR-03's 85%**. The report said nothing about which of those two it was measuring.
+
+The report now splits the run by whether the classifier has seen the wording, names `unseen_wording` as
+the headline, and points at `evaluation/reports/classifier_calibration.md`. Three things came out of
+building it.
+
+**The split does not show the classifier is worse than reported — it shows no gate figure can tell.** The
+18 tickets whose body is not in the training file also score 100%. But running it revealed that an
+exact-body comparison badly overstates "unseen": under D-39's own 0.85 clustering — the threshold the
+classifier's cross-validation already groups its folds by — **14 of those 18 are paraphrases of a
+training body, leaving 4** (VAL-0003, VAL-0004, VAL-0046, VAL-0073). A 100% figure over four tickets
+supports nothing in either direction. So the honest conclusion is not "the classifier is weaker than the
+gate says" but "**the gate cannot speak to this at all**", and the only figures that can are the
+cross-validated ones. That is now in the artefact rather than in a report nobody is directed to.
+
+**One definition of "same wording", not two.** `classify.wording_clusters` is public for this. A second
+implementation in the harness would have answered the same question differently from the classifier's own
+fold grouping — D-18's shape. Its contract is one id per input **in input order**, which the harness zips
+against its own list; a sorted return preserves the length, so `zip(strict=True)` cannot catch it and the
+report would name the wrong tickets with entirely plausible counts (T-R8-7).
+
+**The clustering is capped.** It is O(n²) difflib — measured 0.08 s at 233 bodies, 1.3 s at 1,000, 20 s at
+4,000 — and it runs inside the block whose failure costs a *completed* run its report. The input is a file
+nobody has seen and the training file is operator-configured, so both scale it. Past
+`MAX_CLUSTERED_BODIES` the split says it was skipped, the exact-body figures still stand, and the run
+finishes. A reporting nicety must not be able to lose a run.
+
+**And a justification I had written was not evidence.** The docstring for the normalised-body key cited
+DEV-0106 and VAL-0037 as differing "only in case and whitespace". They do not — VAL-0037 inserts two
+articles and drops a sentence — so normalising does not merge them, and on the real corpus a raw-string
+comparison gives the same 62/18 split. The normalisation is kept because it is the right key for a file
+nobody has seen; the reason given for it was false and is now stated as such.
