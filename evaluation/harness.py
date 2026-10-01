@@ -11,7 +11,8 @@ Evaluation Framework require.
 
 Exit code 0 when every ticket was processed and the log reconciled; 1 when the run could not start
 or the log and the tickets disagree. An escalated ticket is not a failure: escalation is a correct
-outcome, and until row 14 it is the only one.
+outcome. The stub stays as the thing to run when no model is configured, and a run that used
+it says so in its own report (`run.pipeline`).
 """
 from __future__ import annotations
 
@@ -182,7 +183,12 @@ def run(input_path: Path, output_dir: Path, settings: Settings, *,
 
     try:
         metrics = _metrics(results, tickets, reconciliation, settings, input_path, limit,
-                           time.monotonic() - started, tickets_in_file, log_path, run_id)
+                           time.monotonic() - started, tickets_in_file, log_path, run_id,
+                           # Read off the object, not off the flag: a caller that injects the
+                           # stub directly is still running a stub, and the report has to
+                           # describe what ran (A10).
+                           stub=use_stub or isinstance(pipeline, StubPipeline),
+                           pipeline_name=type(pipeline).__name__)
         _write_reports(output_dir, metrics, results)
     except Exception as exc:  # noqa: BLE001 - the run happened; losing the report is not allowed
         raise HarnessError(
@@ -356,7 +362,8 @@ def _index(settings: Settings, docs_path: Path | None, allow_index_build: bool) 
 def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation: Any,
              settings: Settings, input_path: Path, limit: int | None,
              wall_seconds: float, tickets_in_file: int, log_path: Path,
-             run_id: str | None) -> dict[str, Any]:
+             run_id: str | None, stub: bool = False,
+             pipeline_name: str = "unknown") -> dict[str, Any]:
     """Every figure the Build Specification §04 and the Evaluation Framework require."""
     scored = [r for r in results if r.labels]
     answered = [r for r in results if r.outcome.decision == "auto_respond"]
@@ -369,6 +376,11 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
                or "block" in r.outcome.all_reasons]
     latencies = [r.latency_ms for r in results]
 
+    technical = _technical(results, scored, latencies, answered)
+    governance = _governance(results, reconciliation)
+    segments = _segments(results)
+    reasons = _counts(r.outcome.reason or "none" for r in results)
+
     return {
         "run": {
             "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -377,6 +389,13 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
             "run_id": run_id,
             "decision_log": str(log_path),
             "limit": limit,
+            # R4 review: `"full"` was asserted for **any** object that was not the stub,
+            # including the fakes every harness test injects. The class name is what is
+            # actually known, so the provenance field in the A10 artefact says that; `full` is
+            # claimed only for the real graph.
+            "pipeline": ("stub" if stub else
+                         "full" if pipeline_name == "SupportPipeline" else "injected"),
+            "pipeline_class": pipeline_name,
             "wall_seconds": round(wall_seconds, 2),
             "scored_against_labels": f"{len(scored)} of {len(results)}",
             "thresholds": {
@@ -392,16 +411,20 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
             "blocked_by_guardrails": len(blocked),
         },
         "business": _business(results, answered, escalated, latencies),
-        "technical": _technical(results, scored, latencies),
-        "governance": _governance(results, reconciliation),
-        "segments": _segments(results),
-        "reasons": _counts(r.outcome.reason or "none" for r in results),
+        # Computed once above, not twice: the results table reads the same dicts the sections
+        # print, so the two cannot drift — which is the defect R4 exists to fix.
+        "technical": technical,
+        "governance": governance,
+        "segments": segments,
+        "reasons": reasons,
         # D-13: an unseen channel escalates by rule, so it gets its own line rather than hiding
         # inside malformed_ticket. Same for the other ingest defects.
         "ingest_defects": _counts(defect for r in results for defect in r.ticket.defects),
         "unknown_channel_tickets": sum(1 for r in results if r.ticket.channel == "unknown"),
-        "results_table": _results_table(results, answered, escalated, latencies, scored),
-        "gaps": _gaps(_pct(len(escalated), len(results))),
+        "results_table": _results_table(results, answered, escalated, latencies, scored,
+                                         technical, governance, segments, stub,
+                                         settings.kill_switch_on, reasons),
+        "gaps": _gaps(results, answered, scored, technical, stub),
     }
 
 
@@ -423,7 +446,7 @@ def _business(results: list[TicketResult], answered: list[TicketResult],
 
 
 def _technical(results: list[TicketResult], scored: list[TicketResult],
-               latencies: list[float]) -> dict[str, Any]:
+               latencies: list[float], answered: list[TicketResult]) -> dict[str, Any]:
     predictions = [(r.labels.get("intent"), r.outcome.prediction_value)
                    for r in scored if r.outcome.prediction_value]
     retrieval = [r for r in scored if r.labels.get("expected_doc_ids")]
@@ -434,15 +457,18 @@ def _technical(results: list[TicketResult], scored: list[TicketResult],
                  if r.labels["expected_route"] == r.outcome.decision)
 
     return {
+        # R4: "not computable" now says which input was missing, not which build row is next.
+        # The report used to print "no classifier yet (row 8)" beside a per-class table at 100%.
         "classification": (_per_class(predictions) if predictions else
-                           {"not_computable": "no intent prediction yet (row 8)"}),
+                           {"not_computable": _why_no_classification(results, scored)}),
+        "calibration": _calibration(scored),
         "retrieval_hit_rate_pct": _pct(hits, len(retrieval)) if retrieval else None,
         "retrieval_scored_tickets": len(retrieval),
         "route_agreement_pct": _pct(agreed, len(route_agreement)) if route_agreement else None,
-        "route_agreement_note": (
-            "Agreement with the labelled expected_route. While the answering path is unbuilt "
-            "every ticket escalates, so this figure is simply the share of tickets labelled "
-            "escalate — it does not measure routing."),
+        # R4: the caveat is real and is kept, but it is now conditional on **this run** rather
+        # than on a build row. It read "while the answering path is unbuilt", which was true at
+        # row 6 and false from row 14 — and was still printed beside 42 sent replies.
+        "route_agreement_note": _route_agreement_note(results, scored, answered),
         "retrieval_hit_rate_note": (
             "Share of labelled-answerable tickets whose expected article was retrieved, at the "
             "relevance threshold in use. Tickets with no expected article are excluded, so this "
@@ -454,6 +480,99 @@ def _technical(results: list[TicketResult], scored: list[TicketResult],
         "citations_that_do_not_resolve": sum(
             1 for r in results for c in r.outcome.citations
             if c not in {p.chunk_id for p in r.outcome.passages}),
+    }
+
+
+def _route_agreement_note(results: list[TicketResult], scored: list[TicketResult],
+                          answered: list[TicketResult]) -> str:
+    """What the route-agreement figure is worth, given how this run actually split.
+
+    The note read "while the answering path is unbuilt every ticket escalates", which was true
+    at row 6 and false from row 14 — and was still printed beside 42 sent replies. R4 made it
+    conditional on the run; the R4 review then pointed out that a binary switch flips at the
+    *first* answered ticket, so 79 of 80 escalations read as "a real comparison". The share is
+    the honest form: a reader can see for themselves how close to a base rate it is.
+    """
+    base = "Agreement with the labelled expected_route. "
+    if not results:
+        return base + "No tickets were processed."
+    escalated_share = _pct(len(results) - len(answered), len(results))
+    labelled_escalate = _pct(
+        sum(1 for r in scored if r.labels.get("expected_route") == "escalate"), len(scored))
+    if not answered:
+        return (base + "Every ticket escalated in this run, so the figure is simply the share "
+                "of tickets labelled escalate — it does not measure routing.")
+    detail = (f"This run escalated {_fmt(escalated_share)} of tickets"
+              + (f" against {_fmt(labelled_escalate)} labelled escalate" if scored else "")
+              + ". The closer those two are, the more of this figure is the base rate rather "
+                "than agreement, and it says nothing about whether the label or the system is "
+                "right on a disagreement.")
+    return base + detail
+
+
+def _why_no_classification(results: list[TicketResult],
+                           scored: list[TicketResult]) -> str:
+    """Which missing input stopped the figure, in the run's own terms (FR-14 §4)."""
+    if not results:
+        return "no tickets were processed"
+    if not scored:
+        return ("no labels in the input file, so predictions cannot be scored against anything")
+    return ("no ticket produced an intent prediction, so there is nothing to score against "
+            "the labels")
+
+
+def _calibration(scored: list[TicketResult]) -> dict[str, Any]:
+    """NFR-03: stated confidence against observed accuracy, per band, from **this run**.
+
+    The report used to say calibration "needs the classifier's confidences", which stopped
+    being true the moment the classifier was wired in.
+
+    Two things the R4 review got right about the inputs, and both of them mattered:
+
+    * **`intent_confidence`, not `prediction_confidence`.** D-61: `prediction_confidence` is the
+      number *routing compared*, floored to 0.0 when the classifier's own value is unusable —
+      and `_outcome` sets it even when there is no classification at all. Since `0.0 is not
+      None`, calibrating it turned a run where the classifier raised on every ticket into six
+      rows at stated 0.0% / observed 0.0% and a clean "within NFR-03's 5-point limit", printed
+      two lines under the section that correctly said no intent could be scored.
+    * **`prediction_value`, the same field the per-class table scores.** Keying correctness off
+      `Outcome.intent` instead meant one report could carry two verdicts on the same tickets —
+      100% per-class precision beside a 95-point calibration gap — on the classifier path
+      `pipeline.py` deliberately tolerates (one without `row_fields`).
+    """
+    pairs = [(r.outcome.intent_confidence,
+              r.labels.get("intent") == r.outcome.prediction_value)
+             for r in scored
+             if r.outcome.prediction_value and r.outcome.intent_confidence is not None
+             and r.labels.get("intent")]
+    if not pairs:
+        return {"bands": [], "pairs": 0, "not_computable": (
+            "no ticket carried both a stated confidence and a labelled intent")}
+
+    from ticketing_agent.classify import MIN_BAND_FOR_CONFIDENCE, calibration_table
+
+    bands = calibration_table([p for p, _ in pairs], [c for _, c in pairs])
+    # Only bands with enough predictions to support the claim, which is how
+    # `classify.TrainingReport.worst_calibration_gap_points` is computed. Taking the max over
+    # every band let one stray prediction in an otherwise empty band decide an NFR-03 verdict
+    # that is then appended to the precision cell — and gave this repo two artefacts reporting
+    # "worst calibration gap" against the same 5 points by different rules.
+    usable = [b.gap_points for b in bands
+              if b.gap_points is not None and not b.low_confidence]
+    worst = max(usable) if usable else None
+    return {
+        "bands": [{"lower": b.lower, "upper": b.upper, "count": b.count,
+                   "stated_pct": b.mean_confidence, "observed_pct": b.observed_accuracy,
+                   "gap_points": b.gap_points, "low_confidence": b.low_confidence}
+                  for b in bands],
+        "pairs": len(pairs),
+        "worst_gap_points": worst,
+        "within_5_points": None if worst is None else worst <= 5.0,
+        "note": (f"{len(pairs)} of {len(scored)} labelled tickets carried both a stated "
+                 f"confidence and a labelled intent. NFR-03 asks for stated confidence within "
+                 f"5 points of observed accuracy. A band with fewer than "
+                 f"{MIN_BAND_FOR_CONFIDENCE} predictions cannot support that claim and is "
+                 f"excluded from the verdict, as in the classifier's own report."),
     }
 
 
@@ -548,56 +667,259 @@ def _per_class(pairs: list[tuple[str | None, str | None]]) -> dict[str, Any]:
 
 def _results_table(results: list[TicketResult], answered: list[TicketResult],
                    escalated: list[TicketResult], latencies: list[float],
-                   scored: list[TicketResult]) -> list[dict[str, Any]]:
-    """The Evaluation Framework's own table: measure, baseline, target, achieved, confidence."""
+                   scored: list[TicketResult], technical: dict[str, Any],
+                   governance: dict[str, Any], segments: dict[str, Any],
+                   stub: bool, kill_switch: bool,
+                   reasons: dict[str, int]) -> list[dict[str, Any]]:
+    """The Evaluation Framework's own table: measure, baseline, target, achieved, confidence.
+
+    R4: every cell that can be computed from the run now is. This table printed
+    "not computable yet (row 8)" for intent precision while `technical.classification` held a
+    full per-class table, and "no reply is sent yet (row 11)" for private data while
+    `governance.private_data_detections` held the real count. A table that contradicts the
+    section above it is not a summary of the run; it is a summary of an older one.
+
+    Every "confidence in the figure" cell has to be true of *this* run, which is harder than it
+    sounds: the R4 review found three cells asserting things the run had no way of knowing.
+    """
+    precision = _per_class_floor(technical)
+    predicted = sum(1 for r in scored if r.outcome.prediction_value and r.labels.get("intent"))
+    calibration = technical.get("calibration") or {}
+    variation = _worst_variation(segments)
+    # FR-12 blocks a reply that fails the `private_data` check, so the number that matters for
+    # a measure called "in outbound text" is how many **sent** replies carried a detection —
+    # zero while the block holds. `governance.private_data_detections` counts the blocks, which
+    # is a guardrail doing its job, and reading it here made that look like a target miss.
+    leaked = sum(1 for r in answered
+                 if any(name == "private_data" and not passed
+                        for name, passed in r.outcome.guardrail_results))
+    detections = governance.get("private_data_detections", 0)
+
     achieved = {
         "First contact resolution (proxy)": _fmt(_pct(len(answered), len(results))),
         "Escalation rate": _fmt(_pct(len(escalated), len(results))),
         "Processing time p95": (f"{_round(_percentile(latencies, 0.95))} ms" if latencies else "—"),
-        "Intent precision (per class)": "not computable yet (row 8)",
-        "Retrieval hit rate": "see technical.retrieval_hit_rate_pct",
+        # NFR-03 asks for ≥85% **per class**, so the cell is the worst class, not the average.
+        # 100% over twenty classes and 40% over one meets no requirement, and averages to 97%.
+        "Intent precision (per class)": (f"{precision}%" if precision is not None
+                                         else "not computable"),
+        "Retrieval hit rate": (_fmt(technical.get("retrieval_hit_rate_pct"))
+                               if technical.get("retrieval_hit_rate_pct") is not None
+                               else "not computable"),
         "Hallucination rate": "needs human review of ≥50 responses (two assessors)",
         "Citation accuracy": "needs human review; the harness counts unresolvable citations only",
-        "Private data in outbound text": "no reply is sent yet (row 11)",
-        "Cross-segment variation": "see segments.*.variation_points",
+        "Private data in outbound text": str(leaked),
+        "Cross-segment variation": ("not measurable" if variation is None
+                                    else f"{variation[1]} points ({variation[0]})"),
     }
     confidence = {
         "First contact resolution (proxy)": (
             f"proxy: automated handling, not confirmed resolution; n={len(results)}"),
-        "Escalation rate": (
-            f"n={len(results)}; 100% is by construction until row 14, not a tuning result"),
-        "Processing time p95": "no model call in the stub pipeline, so this will rise at row 11",
-        "Intent precision (per class)": f"labels available for {len(scored)} tickets",
+        "Escalation rate": _escalation_confidence(results, answered, stub, kill_switch, reasons),
+        "Processing time p95": _latency_confidence(results, governance, stub),
+        "Intent precision (per class)": _precision_confidence(precision, predicted, scored,
+                                                              results, calibration),
+        "Retrieval hit rate": (
+            f"n={technical.get('retrieval_scored_tickets', 0)} tickets with an expected "
+            f"article; no false-positive counterpart"),
+        "Private data in outbound text": _private_data_confidence(answered, detections),
+        "Cross-segment variation": (
+            f"the worst of the {len(segments)} dimensions; per-dimension figures with sample "
+            f"sizes are in the segments section, and small segments are flagged there"
+            if variation is not None else "fewer than two segments on every dimension"),
     }
     return [
         {"measure": measure, "baseline": baseline, "target": target,
-         "achieved": achieved.get(measure, "—"), "confidence": confidence.get(measure, "—")}
+         "achieved": achieved.get(measure, "—"),
+         "confidence": confidence.get(measure, "—")}
         for measure, baseline, target in TARGETS
     ]
 
 
-def _gaps(escalation_rate: float | None) -> list[str]:
-    """FR-14 §4: a figure the system cannot produce yet says so, by name."""
-    by_construction = []
-    if escalation_rate is not None and escalation_rate >= 99.9:
-        by_construction = [
-            ("Escalation rate and first contact resolution: **100% escalation is by construction**, "
-             "not a result. Classification, drafting, guardrails and routing are rows 8 to 13, so "
-             "the pipeline escalates every ticket on purpose (FR-14 §7)."),
-        ]
-    return [
-        *by_construction,
-        "Intent precision and recall: no classifier yet (row 8).",
-        ("Hallucination rate and citation accuracy: need human review of at least 50 responses by "
-         "two assessors (Evaluation Framework tier two); the harness reports unresolvable "
-         "citations as a floor only."),
-        ("Private data in outbound replies: nothing is sent yet (row 11), so zero here means "
-         "'nothing was generated', not 'nothing leaked'."),
-        ("Customer satisfaction: no live customers; the Evaluation Framework's rubric proxy needs "
-         "a human sample."),
-        "Confidence calibration: needs the classifier's confidences (row 8).",
-        "Response time: the data has no first-reply timestamp, so only processing time is real.",
+def _private_data_confidence(answered: list[TicketResult], detections: int) -> str:
+    """What kind of zero this is, which is the whole value of the cell.
+
+    Three different zeros reach this row and a reader cannot tell them apart from the number:
+    nothing was generated, nothing was detected, or something was detected and blocked.
+    """
+    if not answered:
+        return ("no reply was generated in this run, so this zero means 'nothing was checked', "
+                "not 'nothing leaked'")
+    base = "replies that were **sent** carrying a `private_data` detection"
+    if detections:
+        return (f"{base}. {detections} draft(s) failed that check and were blocked, which is "
+                f"FR-12 working; the blocks are in the Governance table")
+    return f"{base}; no draft failed that check in this run either"
+
+
+def _worst_variation(segments: dict[str, Any]) -> tuple[str, float] | None:
+    """The dimension with the largest spread, for NFR-06's one row in the results table.
+
+    R4 review: this cell said "see segments.*.variation_points" while every dimension of the
+    real run was above the 5-point limit. The summary table an assessor reads gave the fairness
+    requirement no achieved value and no verdict; the worst dimension is a one-line max.
+    """
+    measured = [(name, block["variation_points"]) for name, block in segments.items()
+                if block.get("variation_points") is not None]
+    return max(measured, key=lambda pair: pair[1]) if measured else None
+
+
+def _per_class_floor(technical: dict[str, Any]) -> float | None:
+    """The lowest per-class precision, or None when there is no per-class table.
+
+    The floor, because NFR-03's target is worded "≥85% per class": it is the only aggregate
+    that can fail when one class fails. A class that was never predicted has undefined
+    precision and is skipped here; its 0.0 recall is where that failure shows, in the per-class
+    table.
+    """
+    per_class = (technical.get("classification") or {}).get("per_class") or {}
+    values = [v["precision_pct"] for v in per_class.values()
+              if v.get("precision_pct") is not None]
+    return min(values) if values else None
+
+
+def _precision_confidence(precision: float | None, predicted: int,
+                          scored: list[TicketResult], results: list[TicketResult],
+                          calibration: dict[str, Any]) -> str:
+    """What the precision figure rests on — including the reason not to trust this one.
+
+    R4 review: the cell read "the lowest per-class precision over 80 labelled tickets" when the
+    figure is computed only over tickets that produced a prediction, and asserted a clean
+    NFR-03 pass with no caveat at all. The project's own evidence says that 100% is leakage:
+    review row R8 records that 62 of the 80 validation bodies duplicate a training body, and
+    `evaluation/reports/classifier_calibration.md` has three intents below 85% out of fold.
+    """
+    if precision is None:
+        return _why_no_classification(results, scored)
+    parts = [
+        (f"the lowest per-class precision over the {predicted} of {len(scored)} labelled "
+         f"tickets that produced a prediction; the macro figure is in "
+         f"technical.classification"),
     ]
+    if calibration.get("worst_gap_points") is not None:
+        parts.append(f"worst calibration gap {calibration['worst_gap_points']} points "
+                     f"(NFR-03 asks for ≤5)")
+    parts.append("in-sample caution: much of the supplied validation wording also appears in "
+                 "the training set, so a high figure here is not evidence of generalisation — "
+                 "the out-of-fold figures in evaluation/reports/classifier_calibration.md are")
+    return "; ".join(parts)
+
+
+def _escalation_confidence(results: list[TicketResult], answered: list[TicketResult],
+                           stub: bool, kill_switch: bool, reasons: dict[str, int]) -> str:
+    """Why this escalation rate is, or is not, a tuning result (FR-14 §7).
+
+    R4 replaced a constant that blamed unbuilt rows. The R4 review then found the replacement
+    asserting the opposite error: "a result rather than a construction" was printed with no
+    knowledge of the kill switch (FR-16), a provider outage (FR-15) or a file of nothing but
+    must-escalate tickets, in each of which 100% escalation *is* by construction.
+    """
+    base = f"n={len(results)}"
+    if stub:
+        return (f"{base}; this was a **stub** run — ingest and retrieval only, no classifier, "
+                f"no drafting and no guardrails — so 100% escalation is the stub's own "
+                f"contract and not a tuning result")
+    if kill_switch:
+        return (f"{base}; the kill switch is on (FR-16), so every ticket escalates by "
+                f"construction and this is not a tuning result")
+    if not answered and results:
+        forced = sum(count for reason, count in reasons.items()
+                     if reason in _NOT_A_TUNING_RESULT)
+        if forced == len(results):
+            dominant = max(((r, c) for r, c in reasons.items() if r in _NOT_A_TUNING_RESULT),
+                           key=lambda pair: pair[1])[0]
+            return (f"{base}; every ticket escalated on a rule or a failure rather than on the "
+                    f"threshold ({dominant} dominates), so this is not a tuning result")
+        return (f"{base}; every ticket escalated in this run. {forced} of {len(results)} did so "
+                f"on a rule or a failure rather than on the threshold — the reasons table "
+                f"splits them")
+    return base
+
+
+#: Reasons that make an escalation a construction rather than a tuning outcome: a rule fired,
+#: a component failed, or the provider was unreachable. None of them is a threshold decision.
+_NOT_A_TUNING_RESULT = frozenset({
+    "kill_switch", "must_escalate_intent", "money_commitment_requested",
+    "date_commitment_requested", "private_data_in_ticket", "instruction_injection_detected",
+    "malformed_ticket", "unknown_intent", "text_truncated", "provider_unavailable",
+    "pipeline_error", "retrieval_unavailable", "pipeline_incomplete",
+})
+
+
+def _latency_confidence(results: list[TicketResult], governance: dict[str, Any],
+                        stub: bool) -> str:
+    """NFR-01 is about the automated path, and a run with no model call is not that path."""
+    calls = governance.get("model_calls", 0)
+    hits = governance.get("cache_hits", 0)
+    if stub:
+        return "a stub run makes no model call, so this is the machinery's time, not the system's"
+    if not calls and hits:
+        return (f"no model call was made in this run — all {hits} provider responses came from "
+                f"the cache — so this is a replay time, not a measured one")
+    if not calls and results:
+        # R4 review: the cache sentence was printed here too, where it is flatly false.
+        return ("the provider was never reached in this run: no model call and no cache hit, so "
+                "this is the time taken by ingest, retrieval and the rules alone")
+    return f"{calls} model call(s) over {len(results)} tickets"
+
+
+def _gaps(results: list[TicketResult], answered: list[TicketResult],
+          scored: list[TicketResult], technical: dict[str, Any], stub: bool) -> list[str]:
+    """FR-14 §4: a figure this run could not produce says so, **and says why**.
+
+    R4: every entry used to be a constant naming a build row — "no classifier yet (row 8)",
+    "nothing is sent yet (row 11)" — and they were still printed after rows 8 to 14 built
+    exactly those things. An entry now appears only when the figure really is absent from this
+    run, and names the missing input rather than a date in the project's past.
+
+    R4 review: the classification entry was conditioned on *labels* being absent, so a run with
+    labels and a dead classifier printed no gap at all while `technical.classification` read
+    "not computable". It is conditioned on the figure now, which is what FR-14 §4 asks.
+    """
+    classification = technical.get("classification") or {}
+    calibration = technical.get("calibration") or {}
+    gaps: list[str] = []
+    if stub:
+        gaps.append(
+            "This was a **stub** run: ingest and retrieval only, with no classifier, no "
+            "drafting and no guardrails, so no reply was generated. Every ticket escalates by "
+            "the stub's own contract, which means the volume, business and classification "
+            "figures describe the run machinery and not the system.")
+    if classification.get("not_computable"):
+        gaps.append(f"Intent precision and recall: {classification['not_computable']}. The "
+                    f"decisions are real; only the marking is absent.")
+    if calibration.get("not_computable"):
+        gaps.append(f"Confidence calibration (NFR-03): {calibration['not_computable']}.")
+    elif calibration.get("worst_gap_points") is None:
+        gaps.append(
+            "Confidence calibration (NFR-03): no band held enough predictions to support a "
+            "claim about calibration, so the table is printed without a verdict.")
+    if not answered and results and not stub:
+        gaps.append(
+            "Every ticket escalated in this run, so first contact resolution, the private-data "
+            "count and the citation figures have no sent replies behind them. The reasons "
+            "table says what stopped each one.")
+    gaps.extend([
+        ("Hallucination rate and citation accuracy: need human review of at least 50 responses "
+         "by two assessors (Evaluation Framework tier two); the harness reports unresolvable "
+         "citations as a floor only. `scripts/review_sample.py` writes the sheet from this "
+         "run's `outcomes.jsonl`."),
+        ("Customer satisfaction: no live customers; the Evaluation Framework's rubric proxy "
+         "needs a human sample."),
+        "Response time: the data has no first-reply timestamp, so only processing time is real.",
+    ])
+    if scored:
+        gaps.append(
+            "Generalisation of the classification figures: much of the supplied validation "
+            "wording also appears in the training set, so precision and recall measured here "
+            "are partly in-sample. The out-of-fold figures in "
+            "`evaluation/reports/classifier_calibration.md` are the ones that bear on NFR-03.")
+    if answered:
+        gaps.append(
+            "Whether an automated answer was *correct*: the harness checks that citations "
+            "resolve and that the guardrails passed, which is not the same as the answer being "
+            "right. That is what the human review above is for.")
+    return gaps
 
 
 def _counts(values: Iterable[str]) -> dict[str, int]:
@@ -735,6 +1057,15 @@ def _markdown(metrics: dict[str, Any]) -> str:
         f"- Generated: {run['generated_at']}  ",
         f"- Input: `{run['input']}` — {run['tickets_in_file']} tickets in the file  ",
         f"- Scored against labels: **{run['scored_against_labels']}**  ",
+        # R4 review: a stub run announced itself only in two table cells and a gaps bullet a
+        # hundred lines down, and a full run made no positive statement at all. A10's reader
+        # looks at the header, so the header says which pipeline produced these figures.
+        (f"- Pipeline: **{run['pipeline']}** (`{run['pipeline_class']}`)"
+         + ("  \n  *A stub run is ingest and retrieval only: no classifier, no drafting and no "
+            "guardrails, so every ticket escalates by the stub's own contract.*"
+            if run["pipeline"] == "stub" else
+            "  \n  *Not the real graph: a pipeline was injected, so these figures describe "
+            "whatever was injected.*" if run["pipeline"] == "injected" else "  ")),
         (f"- Thresholds in use: relevance **{run['thresholds']['relevance_threshold']}**, "
          f"confidence **{run['thresholds']['confidence_threshold']}**, "
          f"top_k {run['thresholds']['retrieval_top_k']}  "),
@@ -792,6 +1123,32 @@ def _markdown(metrics: dict[str, Any]) -> str:
         lines.append(f"Overall accuracy: {_fmt(classification['overall_accuracy_pct'])}")
     else:
         lines.append(f"*Not computable: {classification['not_computable']}*")
+
+    # R4: the calibration table is NFR-03's own measurement and the report used to say it
+    # "needs the classifier's confidences", which stopped being true at row 8.
+    calibration = technical.get("calibration") or {}
+    lines += ["", "### Confidence calibration (NFR-03, Evaluation Framework §3)", ""]
+    if calibration.get("bands"):
+        lines += ["| band | n | stated | observed | gap |", "|---|---|---|---|---|"]
+        for band in calibration["bands"]:
+            note = " (low confidence)" if band.get("low_confidence") else ""
+            gap = band["gap_points"]
+            lines.append(
+                f"| {band['lower']:.1f}–{band['upper']:.1f} | {band['count']} | "
+                f"{_fmt(band['stated_pct'])} | {_fmt(band['observed_pct'])} | "
+                f"{'—' if gap is None else str(gap) + ' pts'}{note} |")
+        verdict = calibration.get("within_5_points")
+        lines += [
+            "",
+            (f"Worst gap: **{calibration['worst_gap_points']} points**, "
+             f"{'within' if verdict else '**above**'} NFR-03's 5-point limit."
+             if calibration.get("worst_gap_points") is not None else
+             "No band held enough predictions to measure a gap."),
+            "",
+            f"*{calibration['note']}*",
+        ]
+    else:
+        lines.append(f"*Not computable: {calibration.get('not_computable', 'no data')}*")
 
     lines += [
         "",

@@ -528,16 +528,38 @@ def test_T_FR14_24_the_variation_figure_can_say_not_measurable(tmp_path):
 
 
 def test_T_FR14_25_the_report_says_what_its_headline_numbers_are_not(tmp_path):
-    """Spec §4: a figure the system cannot produce yet says so, by name."""
+    """Spec §4: a figure this run could not produce says so, by name.
+
+    **Re-pointed by review row R4, not weakened.** Two assertions pinned literal strings that
+    R4 exists to remove: "by construction" (which named build rows 8 to 13 as the reason every
+    ticket escalated, years after they were built) and "nothing is sent yet (row 11)". The
+    property each one guarded is asserted here still, and more of it than before: that a
+    100%-escalation run declares the fact, that a zero private-data count declares what it does
+    and does not mean, and — new — that no caveat names a build row at all.
+    """
     report = harness(tmp_path, FakePipeline(decide=lambda t: ("escalate", "no_retrieval")))
     markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    metrics = report.metrics
 
-    assert any("by construction" in gap for gap in report.metrics["gaps"]), (
-        "100% escalation must be declared as by construction, not read as a result")
-    assert "does not measure routing" in report.metrics["technical"]["route_agreement_note"]
-    assert "no false-positive counterpart" in report.metrics["technical"]["retrieval_hit_rate_note"]
-    for phrase in ("human review", "nothing is sent yet", "no first-reply timestamp"):
+    assert metrics["volume"]["answered_automatically"] == 0, "the premise of this run"
+    assert any("Every ticket escalated in this run" in gap for gap in metrics["gaps"]), (
+        "100% escalation must be declared, not left to read as a tuning result")
+    assert "every ticket escalated in this run" in {
+        row["measure"]: row["confidence"]
+        for row in metrics["results_table"]}["Escalation rate"]
+
+    private = {row["measure"]: row for row in metrics["results_table"]}[
+        "Private data in outbound text"]
+    assert private["achieved"] == "0"
+    assert "nothing was checked" in private["confidence"] and "leaked" in private["confidence"], (
+        "a zero with no replies behind it must say which kind of zero it is")
+
+    assert "does not measure routing" in metrics["technical"]["route_agreement_note"]
+    assert "no false-positive counterpart" in metrics["technical"]["retrieval_hit_rate_note"]
+    for phrase in ("human review", "no first-reply timestamp"):
         assert phrase in markdown, phrase
+    for stale in ("row 8", "row 11", "row 13", "row 14"):
+        assert stale not in markdown, f"a caveat still names a build row: {stale!r}"
 
 
 def test_T_FR14_26_no_index_rebuild_refuses_rather_than_building(tmp_path):
@@ -644,11 +666,24 @@ def _answerable_entry(n: int) -> dict:
             "customer_name": "Dana Okonkwo"}
 
 
-def answerable_file(tmp_path, count=6):
+def answerable_file(tmp_path, count=6, labelled=False):
     """A small input file of answerable tickets. There is no such fixture: the engineered
-    corpus is PII, injection, money and malformed tickets, all of which escalate by design."""
-    path = tmp_path / "answerable.json"
-    path.write_text(json.dumps([_answerable_entry(n) for n in range(count)]), encoding="utf-8")
+    corpus is PII, injection, money and malformed tickets, all of which escalate by design.
+
+    `labelled=True` adds the ground-truth block the harness scores against, so the report's
+    classification, calibration and retrieval figures are computable.
+    """
+    entries = []
+    for n in range(count):
+        entry = _answerable_entry(n)
+        if labelled:
+            entry["labels"] = {"intent": "billing_query", "urgency": "high",
+                               "expected_route": "auto_respond",
+                               "answerable_from_docs": True,
+                               "expected_doc_ids": ["DOC-BILL-002"]}
+        entries.append(entry)
+    path = tmp_path / ("answerable-labelled.json" if labelled else "answerable.json")
+    path.write_text(json.dumps(entries), encoding="utf-8")
     return path
 
 
@@ -845,3 +880,357 @@ def test_T_R3_3c_pointing_the_sheet_at_the_wrong_file_is_a_clean_exit(tmp_path, 
                           "--output", str(tmp_path / "s.csv")]) == 2
     assert review_sample(["--input", str(wrong), "--n", "0", "--seed", "1",
                           "--output", str(tmp_path / "s.csv")]) == 2
+
+
+# --- R4: the report describes the system that actually ran ------------------------------
+
+#: Every phrase the report used to print next to real figures. These were written for the row-6
+#: stub and were still there after rows 8 to 14 built everything they said was missing.
+STALE_PHRASES = ("row 8", "row 11", "row 14", "row 6", "no classifier yet",
+                 "nothing is sent yet", "the answering path is unbuilt",
+                 "not computable yet", "by construction until")
+
+
+def test_T_R4_1_a_full_run_report_says_nothing_about_unbuilt_rows(tmp_path):
+    """R4 (FR-14, A10): the report is what acceptance criterion A10 is checked against.
+
+    The last `metrics.md` said "Intent precision and recall: no classifier yet (row 8)" and
+    "Private data in outbound replies: nothing is sent yet (row 11)" **next to** a per-class
+    table at 100% and 42 sent replies. A report that describes a different system than the one
+    that ran is worse than no report: an assessor cannot tell which half to believe.
+    """
+    harness(tmp_path, real_pipeline(tmp_path), input_path=answerable_file(tmp_path))
+
+    written = ((tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+               + (tmp_path / "out" / "metrics.json").read_text(encoding="utf-8"))
+    for phrase in STALE_PHRASES:
+        assert phrase not in written, f"the report still describes an unbuilt system: {phrase!r}"
+    assert "stub" not in written.lower(), "this was not a stub run"
+
+
+def test_T_R4_2_a_stub_run_says_it_is_a_stub_run(tmp_path):
+    """R4: different wording, because a stub run really has not measured most of this."""
+    report = harness(tmp_path, stub_pipeline(tmp_path))
+
+    assert report.metrics["run"]["pipeline"] == "stub"
+    written = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "stub" in written.lower(), "a reader must not mistake this for a measured run"
+    assert "no reply was generated" in written, (
+        "and it must say why the figures are missing, not blame an unbuilt row")
+    for phrase in ("row 8", "row 11", "row 14"):
+        assert phrase not in written, phrase
+
+
+def test_T_R4_3_the_results_table_is_filled_from_the_computed_figures(tmp_path):
+    """R4: "not computable" only when the figure really is absent."""
+    report = harness(tmp_path, real_pipeline(tmp_path),
+                     input_path=answerable_file(tmp_path, labelled=True))
+    metrics = report.metrics
+    table = {row["measure"]: row for row in metrics["results_table"]}
+
+    per_class = metrics["technical"]["classification"]["per_class"]
+    worst = min(v["precision_pct"] for v in per_class.values()
+                if v["precision_pct"] is not None)
+    assert table["Intent precision (per class)"]["achieved"] == f"{worst}%", (
+        "the cell claims to be the per-class figure, so it must be the worst class, "
+        "not the average — NFR-03 wants ≥85% per class")
+
+    detections = metrics["governance"]["private_data_detections"]
+    assert table["Private data in outbound text"]["achieved"] == str(detections)
+    assert "nothing is sent" not in table["Private data in outbound text"]["confidence"]
+
+    assert metrics["technical"]["calibration"]["bands"], "NFR-03's calibration table"
+    assert "needs the classifier" not in json.dumps(metrics["gaps"])
+
+
+def test_T_R4_4_a_figure_that_really_is_absent_still_says_so(tmp_path):
+    """R4: the point is not to remove the caveats — it is to earn them.
+
+    An unlabelled file can compute no classification figures at all, and the report must say
+    that rather than printing a number or a stale excuse.
+    """
+    entries = [{k: v for k, v in _answerable_entry(n).items()} for n in range(3)]
+    path = tmp_path / "unlabelled.json"
+    path.write_text(json.dumps(entries), encoding="utf-8")
+
+    report = harness(tmp_path, real_pipeline(tmp_path), input_path=path)
+    metrics = report.metrics
+
+    assert metrics["run"]["scored_against_labels"] == "0 of 3"
+    assert metrics["technical"]["classification"]["not_computable"], (
+        "no labels, so no precision — and it must say which, not which build row")
+    assert "row" not in metrics["technical"]["classification"]["not_computable"]
+    table = {row["measure"]: row for row in metrics["results_table"]}
+    assert table["Intent precision (per class)"]["achieved"] == "not computable"
+    assert any("no labels" in gap for gap in metrics["gaps"])
+
+
+def test_T_R4_5_the_route_agreement_note_describes_what_happened(tmp_path):
+    """R4: the note said "while the answering path is unbuilt every ticket escalates".
+
+    That was true at row 6 and false from row 14. The caveat it exists to carry — that this
+    figure is not a measurement of routing when everything escalated — is real, so it is kept
+    and made conditional on the run rather than on the build.
+    """
+    answered_run = harness(tmp_path / "a", real_pipeline(tmp_path / "a"),
+                           input_path=answerable_file(tmp_path / "a"))
+    note = answered_run.metrics["technical"]["route_agreement_note"]
+    assert "unbuilt" not in note
+    assert "every ticket escalate" not in note
+
+    all_escalated = harness(tmp_path / "b", stub_pipeline(tmp_path / "b"))
+    note = all_escalated.metrics["technical"]["route_agreement_note"]
+    assert "Every ticket escalated" in note, (
+        "when nothing was answered the figure really is just the share labelled escalate")
+
+
+def two_intent_pipeline(tmp_path, wrong_for=("ANS-004", "ANS-005")):
+    """A classifier with **two** intents and a real error, so the per-class floor can differ.
+
+    R4 review (high): T-R4-3 asserted that the precision cell is the *worst* class and not the
+    average, on a fixture with exactly one class — where min, max and macro are the same
+    number. Mutating `_per_class_floor` to `max` or to a mean left it passing. This fixture has
+    two labelled intents and gets one of them wrong on two tickets, so the three aggregates are
+    three different numbers.
+    """
+    from ticketing_agent.classify import Classification
+    from ticketing_agent.generate import Drafter
+    from ticketing_agent.guardrails import Guardrails, JudgeVerdict
+    from ticketing_agent.handover import HandoverWriter
+    from ticketing_agent.pipeline import SupportPipeline
+    from ticketing_agent.provider import FakeTransport, ProviderClient
+    from ticketing_agent.route import Router
+
+    config = settings(tmp_path)
+    retriever = Retriever(config, embedder=HashingEmbedder(),
+                          client=chromadb.PersistentClient(path=str(tmp_path / "chroma-2i")))
+    retriever.build_index(DOCS)
+
+    class TwoIntents:
+        def classify(self, ticket):
+            # The tickets labelled `rollback_request` are called `billing_query`, so
+            # billing_query's precision falls while rollback_request's recall does.
+            intent = "billing_query"
+            return Classification(
+                intent=intent, intent_confidence=0.95,
+                intent_alternatives=(("rollback_request", 0.03),), urgency="high",
+                urgency_confidence=0.7, urgency_reason="closest to DEV-0001")
+
+    class Judge:
+        def check(self, sentences, retrieved, indices=None):
+            return JudgeVerdict(unsupported=(), detail="judged", prompt_version="PR-03 v1.0")
+
+    transport = FakeTransport([{"choices": [{"message": {"content": json.dumps(
+        {"answerable": False, "unknown_reason": "not covered", "sentences": []})}}],
+        "model": "test-model", "system_fingerprint": "fp"}] * 400)
+    client = ProviderClient(config, transport=transport)
+    return SupportPipeline(retriever=retriever, classifier=TwoIntents(), router=Router(config),
+                           drafter=Drafter(client), guardrails=Guardrails(judge=Judge()),
+                           handover_writer=HandoverWriter(config and client), settings=config)
+
+
+def two_intent_file(tmp_path, count=6, wrong=2):
+    """`count` tickets, the last `wrong` of them labelled a different intent."""
+    entries = []
+    for n in range(count):
+        entry = _answerable_entry(n)
+        entry["labels"] = {"intent": "rollback_request" if n >= count - wrong
+                           else "billing_query"}
+        entries.append(entry)
+    path = tmp_path / "two-intent.json"
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    return path
+
+
+def test_T_R4_6_the_precision_cell_is_the_worst_class_and_not_the_average(tmp_path):
+    """R4 review (high): NFR-03's target is ≥85% **per class**, so the floor is the figure.
+
+    A macro average of 100% over twenty classes and 40% over one meets no requirement and
+    reads as 97%. With two classes at different precisions, min, max and mean are three
+    different numbers and the cell can only be one of them.
+    """
+    report = harness(tmp_path, two_intent_pipeline(tmp_path),
+                     input_path=two_intent_file(tmp_path, count=6, wrong=2))
+    metrics = report.metrics
+    per_class = metrics["technical"]["classification"]["per_class"]
+    values = sorted(v["precision_pct"] for v in per_class.values()
+                    if v["precision_pct"] is not None)
+    assert len(values) >= 1
+    cell = {row["measure"]: row for row in metrics["results_table"]}[
+        "Intent precision (per class)"]
+    assert cell["achieved"] == f"{values[0]}%", (per_class, cell)
+    if len(values) > 1:
+        assert values[0] != values[-1], "the fixture must make the aggregates differ"
+        assert cell["achieved"] != f"{values[-1]}%"
+
+    # The denominator is what produced a prediction, not every labelled ticket.
+    predicted = sum(1 for line in _lines(tmp_path) if line["prediction_value"])
+    assert f"{predicted} of " in cell["confidence"]
+    assert "in-sample caution" in cell["confidence"], (
+        "the project's own evidence says this figure is partly leakage (R8)")
+
+
+def test_T_R4_7_calibration_uses_the_classifiers_number_not_routings_floor(tmp_path):
+    """R4 review (high): a classifier outage printed a clean NFR-03 pass.
+
+    `prediction_confidence` is what routing compared and is floored to 0.0 when there is no
+    usable classification at all (D-61, FR-02 §3.2) — and `0.0 is not None`, so those tickets
+    were counted. Six tickets on which the classifier raised became six rows at stated 0.0% /
+    observed 0.0%, gap 0.0, "within NFR-03's 5-point limit", printed two lines under the
+    section that correctly said no intent could be scored.
+    """
+    pipeline = real_pipeline(tmp_path)
+
+    class Dead:
+        def classify(self, ticket):
+            raise RuntimeError("the classifier is unavailable")
+
+    pipeline._classifier = Dead()
+    report = harness(tmp_path, pipeline,
+                     input_path=answerable_file(tmp_path, count=6, labelled=True))
+    metrics = report.metrics
+
+    assert metrics["technical"]["classification"]["not_computable"]
+    calibration = metrics["technical"]["calibration"]
+    assert calibration["bands"] == [] and calibration["pairs"] == 0, (
+        "no classification means no calibration, not a pass manufactured from floored zeros")
+    assert calibration["not_computable"]
+    assert "within_5_points" not in calibration
+    assert any("Confidence calibration" in gap for gap in metrics["gaps"]), (
+        "FR-14 §4: a figure this run could not produce says so, by name")
+    assert any("Intent precision" in gap for gap in metrics["gaps"])
+
+
+def test_T_R4_8_calibration_and_the_per_class_table_score_the_same_field(tmp_path):
+    """R4 review (high): one report, two verdicts on the same tickets.
+
+    Calibration keyed correctness off `Outcome.intent`, which only arrives via `row_fields()` —
+    a path `pipeline.py` deliberately tolerates being absent. A classifier without it produced
+    100% per-class precision beside a 95-point calibration gap, both describing the same six
+    tickets.
+    """
+    pipeline = real_pipeline(tmp_path)
+
+    class Minimal:
+        intent, intent_confidence, intent_alternatives = "billing_query", 0.95, ()
+
+    class MinimalClassifier:
+        def classify(self, _ticket):
+            return Minimal()
+
+    pipeline._classifier = MinimalClassifier()
+    report = harness(tmp_path, pipeline,
+                     input_path=answerable_file(tmp_path, count=6, labelled=True))
+    technical = report.metrics["technical"]
+
+    assert technical["classification"]["overall_accuracy_pct"] == 100.0
+    calibration = technical["calibration"]
+    bands = [b for b in calibration["bands"] if b["count"]]
+    if bands:
+        for band in bands:
+            assert band["observed_pct"] == 100.0, (
+                "the two sections must agree about which tickets were right")
+    else:
+        # The honest outcome on this path, and the one the fix produces: without `row_fields`
+        # the classifier's own stated confidence never reaches the outcome, so there is nothing
+        # to calibrate and the report says so — rather than scoring a different field and
+        # printing a 95-point gap beside 100% precision.
+        assert calibration["not_computable"] and calibration["pairs"] == 0
+        assert any("Confidence calibration" in gap for gap in report.metrics["gaps"])
+    assert "within_5_points" not in calibration or calibration["within_5_points"] is not False, (
+        "no run may report an NFR-03 failure that contradicts a 100% per-class table")
+
+
+def test_T_R4_9_a_rule_only_run_is_not_called_a_tuning_result(tmp_path):
+    """R4 review (medium): the replacement asserted the opposite error.
+
+    "a result rather than a construction" was printed with no knowledge of the kill switch
+    (FR-16), a provider outage (FR-15) or a file of nothing but must-escalate tickets — in each
+    of which 100% escalation really is by construction. That is the same over-reading R4 exists
+    to stop, pointed the other way.
+    """
+    report = harness(tmp_path, FakePipeline(
+        decide=lambda t: ("escalate", "must_escalate_intent")))
+    cell = {row["measure"]: row for row in report.metrics["results_table"]}["Escalation rate"]
+
+    assert "not a tuning result" in cell["confidence"]
+    assert "must_escalate_intent" in cell["confidence"]
+    assert "a result rather than a construction" not in cell["confidence"]
+
+
+def test_T_R4_10_the_kill_switch_is_named_as_the_reason_everything_escalated(tmp_path):
+    """FR-16 plus R4: with the switch on, 100% escalation is a construction and must say so."""
+    switch = tmp_path / "KILL_SWITCH"
+    switch.write_text("on", encoding="utf-8")
+    report = harness(tmp_path, FakePipeline(decide=lambda t: ("escalate", "kill_switch")),
+                     kill_switch_file=switch)
+    cell = {row["measure"]: row for row in report.metrics["results_table"]}["Escalation rate"]
+
+    assert "kill switch" in cell["confidence"] and "FR-16" in cell["confidence"]
+    assert "not a tuning result" in cell["confidence"]
+
+
+def test_T_R4_11_a_run_that_never_reached_the_provider_does_not_claim_a_cache_replay(tmp_path):
+    """R4 review (medium): "every response was served from the cache" with zero cache hits."""
+    report = harness(tmp_path, FakePipeline(
+        decide=lambda t: ("escalate", "must_escalate_intent")))
+    governance = report.metrics["governance"]
+    assert governance["model_calls"] == 0 and governance["cache_hits"] == 0, "the premise"
+
+    cell = {row["measure"]: row for row in report.metrics["results_table"]}[
+        "Processing time p95"]
+    assert "cache" not in cell["confidence"] or "no cache hit" in cell["confidence"]
+    assert "the provider was never reached" in cell["confidence"]
+
+
+def test_T_R4_12_the_fairness_row_carries_a_figure_and_not_a_cross_reference(tmp_path):
+    """R4 review (medium): NFR-06's one row in the summary table had no value at all.
+
+    `"see segments.*.variation_points"` — while every dimension of the real gate run was above
+    the 5-point limit. The summary table is what an assessor reads.
+    """
+    report = harness(tmp_path, FakePipeline(
+        decide=lambda t: ("auto_respond", None) if t.customer_tier == "standard"
+        else ("escalate", "low_confidence")))
+    metrics = report.metrics
+    cell = {row["measure"]: row for row in metrics["results_table"]}["Cross-segment variation"]
+
+    worst = max(block["variation_points"] for block in metrics["segments"].values()
+                if block["variation_points"] is not None)
+    assert cell["achieved"].startswith(f"{worst} points"), cell
+    assert "see segments" not in cell["achieved"]
+    assert any(name in cell["achieved"] for name in metrics["segments"]), (
+        "and it names which dimension was worst")
+
+
+def test_T_R4_13_the_private_data_row_counts_what_was_sent_not_what_was_blocked(tmp_path):
+    """R4 review (medium): the cell read a guardrail *detection* count.
+
+    FR-12 blocks a reply that fails the `private_data` check, so a detection is the guardrail
+    working. Against a target of 0, reading detections here made a working block look like a
+    target miss — and the measure is named "in outbound text".
+    """
+    from ticketing_agent.guardrails import Guardrails, JudgeVerdict
+
+    pipeline = real_pipeline(tmp_path)
+
+    class LeakyJudge:
+        def check(self, sentences, retrieved, indices=None):
+            return JudgeVerdict(unsupported=(), detail="judged", prompt_version="PR-03 v1.0")
+
+    pipeline._guardrails = Guardrails(judge=LeakyJudge())
+    entry = _answerable_entry(0)
+    entry["body"] = ("Where can I see my invoice breakdown? Reply to "
+                     "dana.okonkwo@acme-health.example.")
+    path = tmp_path / "leaky.json"
+    path.write_text(json.dumps([entry]), encoding="utf-8")
+
+    report = harness(tmp_path, pipeline, input_path=path)
+    metrics = report.metrics
+    cell = {row["measure"]: row for row in metrics["results_table"]}[
+        "Private data in outbound text"]
+
+    assert cell["achieved"] == "0", (
+        "nothing was sent carrying private data, whatever the guardrails detected")
+    if metrics["governance"]["private_data_detections"]:
+        assert "blocked" in cell["confidence"] and "FR-12" in cell["confidence"]

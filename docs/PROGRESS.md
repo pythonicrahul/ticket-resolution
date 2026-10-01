@@ -1608,3 +1608,88 @@ unusually long reply differs between them. Noted in D-63 — the run output is t
 log is the artefact for audit, and the log says when it cut something.
 
 `uv run pytest -q` → **529 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R4 · The report describes the run, not the build (FR-14, A10)
+
+The last `metrics.md` said, next to a per-class table at 100% and 42 sent replies: *"Intent precision and
+recall: no classifier yet (row 8)"*, *"Private data in outbound replies: nothing is sent yet (row 11)"*,
+*"while the answering path is unbuilt every ticket escalates"*. Every caveat in the report was a constant
+naming a build row, and all of them had been built weeks earlier. A report that describes a different
+system than the one that ran is worse than one with gaps in it: an assessor cannot tell which half to
+believe, and A10 is checked against this file.
+
+**Files changed.** `evaluation/harness.py` and `tests/test_fr14_harness.py` only — the report is the sole
+thing that moved. D-66, D-67; FR-14 §4 and §6 item 25 amended, items 36–46 added; D-37's wording amended
+where it mandated the phrase this row removes.
+
+**Tests added (13).** `test_T_R4_1` … `_13`. 542 passing.
+
+### What the review found, and what I had got wrong
+
+The reviewer returned **five highs**, no severe. All five are fixed. Three of them were the same mistake
+in different places: R4 replaced a false claim with another false claim.
+
+1. **`_calibration` manufactured an NFR-03 pass out of a classifier outage.** It calibrated
+   `prediction_confidence`, which FR-02 §3.2 floors to 0.0 when there is no usable classification — and
+   `_outcome` sets it even when `state.classification is None`. Since `0.0 is not None`, a run where the
+   classifier raised on every ticket produced six rows at stated 0.0% / observed 0.0%, gap 0.0, *"within
+   NFR-03's 5-point limit"* — printed two lines under the section that correctly said no intent could be
+   scored. D-61 already said which number to calibrate; I used the other one. Now `intent_confidence`,
+   and a prediction is required. T-R4-7.
+2. **One report, two verdicts on the same tickets.** Calibration keyed correctness off `Outcome.intent`
+   while the per-class table used `prediction_value`. On the classifier path `pipeline.py` deliberately
+   tolerates (one without `row_fields`), that gave 100% per-class precision beside a **95-point**
+   calibration gap. Both now score `prediction_value`; where the stated confidence never reaches the
+   outcome, calibration declares itself not computable rather than scoring something else. T-R4-8.
+3. **I changed behaviour a requirement defines without changing the requirement.** FR-14 §4 mandated
+   "by construction" *in those words*, §6 item 25 repeated it, and D-37 recorded it. I removed the phrase
+   from the output and left all three untouched — a direct CLAUDE.md violation ("Never change behaviour a
+   requirement defines without saying so first"), and the one that would have made this row unreviewable.
+   Spec and decision now carry the amendment with its reason.
+4. **T-R4-3, R4's own acceptance test, could not fail on either headline assertion.** Its fixture has one
+   intent, so min, max and macro mean are the same number: mutating `_per_class_floor` to `max` or to a
+   mean left it green, while its docstring claimed to be testing exactly that. The private-data assertion
+   compared `"0" == "0"`. `two_intent_pipeline` / `two_intent_file` build two classes at different
+   precisions, and T-R4-13 drives a real `private_data` path. T-R4-6.
+5. **The precision cell asserted a clean NFR-03 pass and overstated its denominator.** It claimed "over 80
+   labelled tickets" while computing over tickets that produced a prediction, and carried no caveat at all
+   — although this project's own evidence (R8: most validation bodies duplicate a training body; three
+   intents below 85% out of fold) says the 100% is leakage. Denominator corrected; the cell and the gaps
+   list now carry the in-sample caution.
+
+**Seven mediums, all fixed.** *"every response was served from the cache"* was printed on runs with zero
+cache hits (now distinguishes a replay from never reaching the provider). *"A result rather than a
+construction"* was asserted with no knowledge of the kill switch, a provider outage or a rule-only file —
+the same over-reading this row exists to stop, pointed the other way; it now claims a construction only
+when one is identifiable, and `test_T_FR14_25` had been pinning that false claim on a `FakePipeline` that
+escalates by construction. `isinstance(pipeline, StubPipeline)` made `"full"` a claim about any injected
+object, so every harness test's output asserted it had run the real graph; the field is positive now and
+carries the class name. The worst-gap verdict counted bands the same report flags "(low confidence)",
+contradicting `classify.py`'s own rule. The gaps list stopped naming classification when labels existed
+but predictions did not. "Private data in outbound text" read a guardrail *detection* count — text that
+was **blocked**, not sent — so FR-12 doing its job read as a target miss. And NFR-06's one row in the
+summary table was a cross-reference while every dimension of the real run was above the limit; it now
+carries the worst dimension and names it (`28.5 points (region)`).
+
+Six lows fixed too, including a garbled sentence that reached the report ("is the stub's not a tuning
+result"), a missing header line (a stub run announced itself only in two table cells and a bullet a
+hundred lines down), and `_technical`/`_governance` being computed twice — identical today, and a future
+divergence is precisely the defect this row fixes.
+
+### The judgement call, stated plainly
+
+**I modified an existing test.** `test_T_FR14_25` asserted the literal strings `"by construction"` and
+`"nothing is sent yet"` — the exact output this row was commissioned to remove. I re-pointed it and added
+assertions it did not have. The reviewer was asked to rule on this directly and found it **stronger, not
+weaker**: both removed properties are re-asserted, the escalation declaration in two places rather than
+one, the private-data zero as a value plus its meaning rather than a markdown substring, plus a new sweep
+for build-row references anywhere in the output. It also found the string the test now pins is false for
+its own fixture — fixed under medium 2 above.
+
+Verified by running it, not only by the suite: a stub run, a rule-only run and a full cached gate run
+(80 tickets, 42 answered) each produce **zero** occurrences of "row 8", "row 11", "row 14", "no classifier
+yet", "nothing is sent yet", "unbuilt", "not computable yet" or "by construction".
+
+`uv run pytest -q` → **542 passed**. `uv run ruff check .` → clean.

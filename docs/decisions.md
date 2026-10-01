@@ -386,7 +386,9 @@ rate, because NFR-06 is about resolution rate *and quality*.
 The same principle runs through the report after this row: `_pct` returns `None` rather than `0.0` for an
 empty denominator, route agreement says in the report that it does not measure routing while everything
 escalates, the FCR and escalation figures declare that 100% escalation is by construction until row 14, and
-retrieval hit rate states that it has no false-positive counterpart. The report is the artefact an assessor
+retrieval hit rate states that it has no false-positive counterpart. (**The middle one is amended by
+D-66**: "by construction until row 14" was a constant that outlived its reason and was still printed long
+after row 14 shipped. The caveat stays; it is conditional on the run now, not on the build.) The report is the artefact an assessor
 reads; a number that overstates what was measured is worse than a gap that names itself.
 
 ## D-38 · The relevance threshold is 0.25 (FR-10, checkpoint row 7)
@@ -1239,3 +1241,67 @@ Since D-63 it is the **only** gate on writing the outbound text to the decision 
 `_terminal_reason` now returns `guardrails_did_not_run` for that state, matching `_after_check`. FR-12 §3.3
 already says a check that raises is a failure and not a pass; this makes a check that never produced a
 report read the same way. T-R3-7.
+
+## D-66 · The report describes the run, not the build (FR-14, A10) — and D-37's wording is amended
+
+The last `metrics.md` said, next to a per-class table at 100% and 42 sent replies:
+
+> Intent precision and recall: no classifier yet (row 8).
+> Private data in outbound replies: nothing is sent yet (row 11), so zero here means 'nothing was
+> generated', not 'nothing leaked'.
+> *While the answering path is unbuilt every ticket escalates … it does not measure routing.*
+
+Every one of those was written for the row-6 stub and was still printed after rows 8 to 14 built exactly
+the things they said were missing. A report that describes a different system than the one that ran is
+worse than a report with gaps in it: an assessor cannot tell which half to believe, and A10 is checked
+against this file.
+
+**This amends D-37's last paragraph**, which said the report "declare[s] that 100% escalation is by
+construction until row 14", and FR-14 §4, which mandated that phrase *in those words*. The caveat was
+right; anchoring it to a build row was not. Every note and every `gaps` entry is now conditional on the
+run and names the missing **input** rather than a date in the project's past, and the results table is
+filled from the figures the sections above it already computed — by reading the same dicts, computed once,
+so the two cannot drift.
+
+Four choices inside that are worth recording, because the R4 review found the first attempt at three of
+them asserting the opposite error:
+
+* **"By construction" is claimed only when a construction is identifiable**: a stub run, the kill switch
+  (FR-16), or every ticket escalating on a rule or a failure rather than on the threshold. The first
+  attempt printed "a result rather than a construction" for *any* 100%-escalation run, which is false
+  during a provider outage or on a file of nothing but must-escalate tickets — the same over-reading this
+  decision exists to stop, pointed the other way.
+* **Intent precision is the lowest per-class figure, not the macro average.** NFR-03's target is "≥85%
+  per class". 100% over twenty classes and 40% over one meets no requirement and averages to 97%. The
+  denominator is the tickets that produced a prediction, not every labelled ticket, and the cell carries
+  the in-sample caution: review row R8 records that most of the supplied validation wording also appears
+  in the training set, so a high figure here is not evidence of generalisation.
+* **"Private data in outbound text" counts what was sent, not what was blocked.** FR-12 blocks a reply
+  that fails the `private_data` check, so a detection is the guardrail working. Against a target of 0,
+  reading the detection count in a row named "in outbound text" made that look like a target miss. The
+  blocks stay in the Governance table and are cross-referenced.
+* **The fairness row carries a number.** It read "see segments.*.variation_points" while every dimension
+  of the real gate run was above NFR-06's 5-point limit. The summary table is what an assessor reads; the
+  worst dimension is a one-line `max`.
+
+## D-67 · Calibration is computed from the classifier's own number, over the field the per-class table scores (NFR-03, FR-14)
+
+The report said confidence calibration "needs the classifier's confidences", which stopped being true at
+row 8. It is computed from the run now — the Evaluation Framework's five bands, reusing
+`classify.calibration_table` so there is one implementation. Three things about the inputs, each of which
+was wrong in the first attempt and each of which produced a *confidently false* figure:
+
+* **`intent_confidence`, not `prediction_confidence`.** Per D-61 the latter is the number routing
+  compared, floored to 0.0 when the classifier's own value is unusable — and `_outcome` sets it even when
+  there is no classification at all. Since `0.0 is not None`, a run where the classifier raised on every
+  ticket produced six rows at stated 0.0% / observed 0.0%, gap 0.0, and a clean "within NFR-03's 5-point
+  limit" — printed two lines below the section that correctly said no intent could be scored.
+* **`prediction_value`, the field the per-class table also scores.** Keying correctness off
+  `Outcome.intent` instead meant one report could carry two verdicts on the same tickets: 100% per-class
+  precision beside a 95-point calibration gap, on the classifier path `pipeline.py` deliberately
+  tolerates (one without `row_fields`). Where the stated confidence does not reach the outcome at all,
+  calibration now declares itself not computable rather than scoring something else.
+* **Bands below `MIN_BAND_FOR_CONFIDENCE` are excluded from the verdict**, which is how
+  `classify.TrainingReport.worst_calibration_gap_points` already worked. Taking the max over every band
+  let one stray prediction in an otherwise empty band decide an NFR-03 verdict — and gave this repo two
+  artefacts reporting "worst calibration gap" against the same 5 points by different rules.
