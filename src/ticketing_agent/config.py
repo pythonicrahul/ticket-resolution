@@ -31,7 +31,10 @@ class Settings:
 
     # Model provider (FR-15, NFR-07, NFR-08)
     llm_api_key: str = ""
-    llm_base_url: str = "https://openrouter.ai/api/v1"
+    #: The documented default (D-55, review row R9). It was `openrouter.ai`, whose free pool
+    #: refused every request when it was measured (D-46) — so commenting out `LLM_BASE_URL`
+    #: silently pointed an OpenAI key at a provider that would 401 and escalate every ticket.
+    llm_base_url: str = "https://api.openai.com/v1"
     model_name: str = ""          # required: set MODEL_NAME, never defaulted here
     judge_model_name: str = ""
     llm_timeout_seconds: float = 20.0
@@ -103,8 +106,24 @@ class Settings:
         value = self.model_name.strip()
         if not value:
             raise ConfigError(
-                "MODEL_NAME is not set: choose a free-tier model id (NFR-07 allows no spend). "
-                "There is deliberately no default in the code.")
+                "MODEL_NAME is not set: choose a small, cheap, instruction-following model id "
+                "(D-55 made NFR-07 a budget rather than a prohibition). There is deliberately "
+                "no default in the code.")
+        return value
+
+    def require_api_key(self) -> str:
+        """FR-15, R9 review: an unset key is a setup error, not a provider outage.
+
+        Without this a run finished with every ticket escalated as `provider_unavailable` and
+        exit code 0 — which reads as a result, and `metrics.md` reported 80/80 escalated. The
+        classifier already refuses to start when it is missing ("a setup error, not a silent
+        fallback"); the only secret got the opposite treatment.
+        """
+        value = self.llm_api_key.strip()
+        if not value:
+            raise ConfigError(
+                "LLM_API_KEY is not set. Copy `.env.example` to `.env` and fill it in, or run "
+                "with --stub-pipeline to exercise the machinery without a provider.")
         return value
 
     def __repr__(self) -> str:

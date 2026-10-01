@@ -2068,3 +2068,83 @@ def test_T_R8_9_the_reported_threshold_is_the_one_that_was_applied(tmp_path):
         __import__("evaluation.harness", fromlist=["_near_duplicates_of_training"])
         ._near_duplicates_of_training), "the threshold must be passed, not defaulted"
     assert source, "classify is importable"
+
+
+# --- R9: the provider and the spend are visible in every run -----------------------------
+
+
+def test_T_R9_2_every_run_records_the_provider_host_and_the_models(tmp_path):
+    """R9 (NFR-07): the spend has to be visible in the artefact, not inferred from the README.
+
+    NFR-07 said zero spend and D-55 amended it to a paid provider within a stated budget. An
+    amendment nobody can check from the report is not an amendment, so each run records the
+    provider **host**, both model names and the model-call count. Host only, never the key or
+    the full URL — a base URL can carry a token in a query string.
+    """
+    report = harness(tmp_path, FakePipeline(), model_name="gpt-4o-mini",
+                     judge_model_name="gpt-4.1-mini",
+                     llm_base_url="https://api.openai.com/v1")
+    provider = report.metrics["run"]["provider"]
+
+    assert provider["host"] == "api.openai.com"
+    assert provider["model"] == "gpt-4o-mini"
+    assert provider["judge_model"] == "gpt-4.1-mini"
+    assert "model_calls" in report.metrics["governance"]
+
+    written = ((tmp_path / "out" / "metrics.json").read_text(encoding="utf-8")
+               + (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8"))
+    assert "api.openai.com" in written
+    assert "gpt-4o-mini" in written
+    assert "/v1" not in written.split("api.openai.com")[1][:4], "the host, not the whole URL"
+
+
+def test_T_R9_2b_no_api_key_can_reach_the_report(tmp_path):
+    """NFR-04 and CLAUDE.md: no key in code, tests, fixtures or history — or in a report.
+
+    A base URL is operator-supplied and could carry a token in a query string, which is why the
+    report stores the parsed host rather than the configured string.
+    """
+    # Not an `sk-` prefix: that is exactly what a secret scanner looks for, and CLAUDE.md
+    # forbids keys in tests and fixtures. The repo's convention is an obviously-synthetic name.
+    report = harness(tmp_path, FakePipeline(),
+                     llm_api_key="not-a-real-key-TESTKEYTESTKEY",
+                     llm_base_url="https://user:not-a-real-key-INUSERINFO@api.openai.com"
+                                  "/v1?token=not-a-real-key-INURL")
+    written = ((tmp_path / "out" / "metrics.json").read_text(encoding="utf-8")
+               + (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+               + json.dumps(report.metrics))
+
+    assert "not-a-real-key-TESTKEY" not in written, "the key reached the report"
+    assert "not-a-real-key-INURL" not in written, "a token in the base URL query reached the report"
+    assert "not-a-real-key-INUSERINFO" not in written, (
+        "a credential in the URL's userinfo reached the report — `urlsplit().hostname` drops "
+        "it, and this is the case the review found untested")
+    assert report.metrics["run"]["provider"]["host"] == "api.openai.com"
+
+
+def test_T_R9_2c_an_unconfigured_judge_is_reported_as_not_independent(tmp_path):
+    """R9 review (low): this test used to assert its own fixture's default.
+
+    It claimed "a stub run makes no provider call and the report must not imply a model was
+    used", but `settings()` defaults `judge_model_name` to `""`, so `judge_model is None` was
+    true of the fixture rather than of anything the stub did. What matters is the claim the
+    report makes about **independence**, which is what D-74 was about.
+    """
+    unset = harness(tmp_path / "a", stub_pipeline(tmp_path / "a"), model_name="test-model")
+    provider = unset.metrics["run"]["provider"]
+    assert provider["judge_model"] is None
+    assert provider["grounding_judge_is_independent"] is False
+    markdown = (tmp_path / "a" / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "not an independent check" in markdown
+
+    # Same model for both roles is not independence either, however it is spelled.
+    same = harness(tmp_path / "b", FakePipeline(), model_name="gpt-4o-mini",
+                   judge_model_name="gpt-4o-mini")
+    assert same.metrics["run"]["provider"]["grounding_judge_is_independent"] is False
+
+    # A different one is, and the report stops disclaiming.
+    other = harness(tmp_path / "c", FakePipeline(), model_name="gpt-4o-mini",
+                    judge_model_name="gpt-4.1-mini")
+    assert other.metrics["run"]["provider"]["grounding_judge_is_independent"] is True
+    assert "not an independent check" not in (
+        tmp_path / "c" / "out" / "metrics.md").read_text(encoding="utf-8")

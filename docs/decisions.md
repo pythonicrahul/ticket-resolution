@@ -906,6 +906,9 @@ breaker did its job — it stopped hammering a provider that was refusing us —
 trying, and a reader of `metrics.md` would have seen a 78.8% escalation rate that was mostly an availability
 artefact.
 
+**Amended by D-74: none of the mechanism described below is in the code.** The author had it removed, and
+what survived is the circuit-breaker fix. Kept as the record of what was tried and measured.
+
 **The fix is to spend the budget at the rate it is granted.** `_RateLimiter` keeps a sliding 60-second
 window of requests and tokens and waits before a call that would exceed either. Settings
 `PROVIDER_TOKENS_PER_MINUTE` and `PROVIDER_REQUESTS_PER_MINUTE`, both 0 (off) by default so nothing changes
@@ -936,6 +939,11 @@ Decided by the author, 2026-09-28, after two gate runs were spoiled by free-tier
 is a free tier only (`MODEL_NAME` in `.env`)"*. This decision changes that, and the PRD revision has to
 record it rather than let it drift, because the assessment gate checks the claim.
 
+**Why, in one sentence.** The free tiers throttled so heavily that development and testing became very
+challenging: see D-46 (OpenRouter's shared pool refused 20 consecutive requests) and D-54 (Groq's free
+tier escalated 21 of 80 tickets without attempting them, and still 8 of 65 after the client learned to
+pace itself). Gate runs were unrepeatable, and the figures measured throttling rather than quality.
+
 **Why.** Two full runs and a smoke investigation went on the free tier. The evidence:
 
 | attempt | result |
@@ -952,12 +960,16 @@ a quarter of the sample never reaches a model.
 - `LLM_BASE_URL` and `MODEL_NAME` move to OpenAI. **No code changes**: the provider client is
   OpenAI-compatible and has never known which host it talks to (D-47 made the same point when Groq replaced
   OpenRouter).
-- The rate limiter stays and is switched off by setting both budgets to 0. It remains the answer for any
-  future free tier, and D-54's finding — that throttling must not open the circuit breaker — is a
-  correctness fix that has nothing to do with who is paying.
-- **The budget is $5 and the run is the only thing spending it.** A full 80-ticket run is roughly 250 calls;
-  the metrics report now carries an estimated cost so a run's spend is visible in the report rather than on
-  a bill, and the response cache means a re-run over the same tickets costs nothing.
+- ~~The rate limiter stays and is switched off by setting both budgets to 0.~~ **Amended, D-74:** the
+  author had the limiter removed ("remove that throttling and all which you added"), so `_RateLimiter`,
+  `PROVIDER_TOKENS_PER_MINUTE` and `PROVIDER_REQUESTS_PER_MINUTE` do not exist. What survived is the part
+  that mattered — D-54's finding that throttling must not open the circuit breaker — which is a
+  correctness fix with nothing to do with who is paying.
+- **The budget is $5 and the run is the only thing spending it.** ~~A full 80-ticket run is roughly 250
+  calls; the metrics report now carries an estimated cost~~ — **amended, D-74**: a measured run makes
+  **155** calls and costs about **$0.03** (D-68), and the report names the provider host, both models and
+  the model-call count but **carries no token or cost figure**. The arithmetic is in D-68 and the README.
+  The response cache means a re-run over the same tickets costs nothing.
 
 **What the PRD revision must say.** NFR-07 becomes a *budget* rather than a prohibition: the system must run
 within a stated spend, the spend must be reported, and the free-tier path must remain available (the
@@ -1548,3 +1560,66 @@ DEV-0106 and VAL-0037 as differing "only in case and whitespace". They do not �
 articles and drops a sentence — so normalising does not merge them, and on the real corpus a raw-string
 comparison gives the same 62/18 split. The normalisation is kept because it is the right key for a file
 nobody has seen; the reason given for it was false and is now stated as such.
+
+## D-74 · `JUDGE_MODEL_NAME` was dead configuration, and the report had started publishing the claim (FR-12, NFR-07)
+
+`.env.example` has carried `JUDGE_MODEL_NAME` since D-55, with this comment beside it:
+
+> a **different** model on purpose: FR-12's grounding check is not independent [otherwise]
+
+**Nothing read it.** `judge_model_name` was defined in `Settings`, set from the environment, and consumed
+only by `scripts/provider_smoke.py`. `GroundingJudge.check` called `complete_structured` with no `model=`,
+so PR-03 ran on `MODEL_NAME` — the drafting model marking its own homework. The cache is the proof: of the
+374 recorded responses, 220 are `gpt-4o-mini` and 154 are `openai/gpt-oss-120b`, and **not one** is
+`gpt-4.1-mini`. No run this project had ever made used a second model.
+
+Review row R9 then put the provider into every report, which turned a stale comment into a
+machine-readable claim: `metrics.md` printed ``judge `gpt-4.1-mini` `` on runs where that model was never
+called. An assessor reading it would conclude FR-12's grounding guardrail was independent.
+
+**Fixed by wiring it, not by deleting the claim.** `GroundingJudge` takes a `model`, the harness passes
+`settings.judge_model_name`, and the report carries `grounding_judge_is_independent` computed from whether
+the two model names differ — stated rather than implied. When they do not, the markdown says so: *"The
+grounding check runs on the drafting model, so it is not an independent check."*
+
+Verified by running it: a four-ticket run wrote the first two `gpt-4.1-mini-2025-04-14` responses in this
+project's history.
+
+**Two consequences for R13.** The judge model is part of the response-cache key, so **every cached
+grounding response is now orphaned** — the judge misses cache on every ticket until a run re-records it,
+which costs a live call per answered ticket. And the $0.03 figure was measured with `gpt-4o-mini` for both
+roles, so a run with an independent judge costs somewhat more. Both are stated in the README beside the
+figure rather than left for someone to discover.
+
+## D-75 · The only secret had no placeholder, and a missing key read as a result (NFR-09, A1, FR-15)
+
+README step 3 said "then set `LLM_API_KEY`". `.env.example` had **no `LLM_API_KEY=` line** — the string
+appeared only inside a `curl` example in a comment. A reader following A1 literally (`cp .env.example
+.env`, look for the variable, fill it in) would not find it.
+
+Worse was what happened next. With no key, `ChatOpenAI` raises, the provider client maps it to
+`ProviderError`, and FR-15 does exactly what it promises: every ticket escalates with
+`provider_unavailable`, the run completes, and the harness exits **0**. `metrics.md` then reports 80 of 80
+escalated — which reads as a result. FR-15's behaviour is right for a provider that *fails*; it is the
+wrong reading of a provider that was never configured.
+
+`Settings.require_api_key()` now refuses, beside the `require_model()` check that was already there, and
+`.env.example` carries the empty placeholder CLAUDE.md asks for. This is the same treatment the classifier
+already had — step 4's "a missing model is a setup error, not a silent fallback" — and the only secret in
+the project was the one thing getting the opposite.
+
+## D-76 · The PRD records its own amendments, because D-55 said it had to (process)
+
+D-55 wrote: *"the PRD revision has to record it rather than let it drift, because the assessment gate
+checks the claim."* The drift happened anyway. `docs/PRD.md` NFR-07 still read "Zero spend: free tiers
+only" while the README documented a paid default, `.env.example` shipped OpenAI values and D-55 recorded
+the decision — the source-of-truth document on the wrong side of its own amendment, and `T-R9-1` reads the
+README, `.env.example` and D-55 and deliberately not the PRD, so nothing caught it.
+
+The PRD now has a **revision log**, and NFR-07's row carries the amendment with the original wording
+struck through rather than erased: an amendment that deletes what it amended cannot be reviewed. NFR-01's
+measured miss (D-68) is recorded there too, since the same gate checks it.
+
+`CLAUDE.md` still lists "Runtime model is a free tier only" among the non-negotiables, which is now
+inconsistent with NFR-07 as amended. **That file is the author's**, so the inconsistency is flagged in the
+PRD's revision log rather than edited away here.

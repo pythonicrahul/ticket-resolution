@@ -370,12 +370,29 @@ class GroundingJudge:
     The judge is a model and can be lenient — especially one from the generator's own family —
     so code checks that each claimed quote is really in a cited passage. That turns half of the
     judgement into a deterministic test (PR-03's own "known weaknesses").
+
+    `model` is the other half. `.env.example` has carried `JUDGE_MODEL_NAME` since D-55 with the
+    comment "a **different** model on purpose: FR-12's grounding check is not independent"
+    otherwise — and **nothing read it**. The setting was in the config, in the README and (after
+    review row R9 put the provider in the report) in every `metrics.json`, while `check` passed
+    no `model=` and PR-03 ran on `MODEL_NAME`. Every one of the 220 recorded responses in the
+    cache is `gpt-4o-mini`; no run this project has made ever used a second model. The claim of
+    independence was published and untrue (R9 review, D-74).
     """
 
-    def __init__(self, client: ProviderClient, max_tokens: int = 900) -> None:
+    def __init__(self, client: ProviderClient, max_tokens: int = 900,
+                 model: str | None = None) -> None:
         self._client = client
         self._prompt = load(PROMPT_ID, PROMPT_NUMBER)
         self._max_tokens = max_tokens
+        #: None means `MODEL_NAME`, which is the drafting model marking its own homework. The
+        #: harness passes `JUDGE_MODEL_NAME` when one is configured.
+        self._model = (model or "").strip() or None
+
+    @property
+    def model(self) -> str | None:
+        """The model this judge asks, or None when it uses the drafting model."""
+        return self._model
 
     def check(self, sentences: Sequence[tuple[str, Sequence[str]]],
               retrieved: Sequence[Passage],
@@ -402,7 +419,7 @@ class GroundingJudge:
         ]
         structured = self._client.complete_structured(
             messages, prompt_id=PROMPT_ID, prompt_version=PROMPT_VERSION,
-            schema=GroundingCheck, max_tokens=self._max_tokens)
+            schema=GroundingCheck, max_tokens=self._max_tokens, model=self._model)
 
         corpus = _comparable(" ".join(p.text for p in retrieved))
         asked = set(numbers)

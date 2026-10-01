@@ -325,6 +325,7 @@ def _build_pipeline(settings: Settings, docs_path: Path | None,
     retriever = _index(settings, docs_path, allow_index_build)
     try:
         settings.require_model()
+        settings.require_api_key()
     except ConfigError as exc:
         raise HarnessError(
             f"{exc} Run with --stub-pipeline to exercise the machinery without a model.") from None
@@ -338,7 +339,11 @@ def _build_pipeline(settings: Settings, docs_path: Path | None,
     client = ProviderClient(settings, read_cache=read_cache)
     return SupportPipeline(
         retriever=retriever, classifier=classifier, router=Router(settings),
-        drafter=Drafter(client), guardrails=Guardrails(judge=GroundingJudge(client)),
+        drafter=Drafter(client),
+        # R9 review / D-74: `JUDGE_MODEL_NAME` existed, was documented as making FR-12's
+        # grounding check independent, and reached nothing. PR-03 ran on the drafting model.
+        guardrails=Guardrails(judge=GroundingJudge(
+            client, model=settings.judge_model_name)),
         handover_writer=HandoverWriter(client), settings=settings)
 
 
@@ -412,6 +417,10 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
             # against a cold cache, so the one configuration that cannot reproduce itself left
             # no trace in its own artefact. A5 and NFR-08 are judged on a run that can.
             "read_cache": read_cache,
+            # R9: NFR-07 said zero spend and D-55 amended it to a paid provider within a stated
+            # budget. An amendment nobody can check from the report is not an amendment, so the
+            # provider and the models are on every run beside the model-call count.
+            "provider": _provider(settings),
             "wall_seconds": round(wall_seconds, 2),
             "scored_against_labels": f"{len(scored)} of {len(results)}",
             "thresholds": {
@@ -442,6 +451,35 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
                                          technical, governance, segments, stub,
                                          settings.kill_switch_on, reasons, latency),
         "gaps": _gaps(results, answered, scored, technical, latency, stub),
+    }
+
+
+def _provider(settings: Settings) -> dict[str, Any]:
+    """Which provider and models this run was configured with (R9, NFR-07).
+
+    **The host, never the configured URL.** A base URL is operator-supplied and can carry a
+    token in a query string, and CLAUDE.md's rule is that no key reaches code, tests, fixtures
+    or history — a report is none of those and all of them. `urlsplit().hostname` drops the
+    scheme, any credentials, the path and the query, so only the host can survive into the
+    artefact.
+    """
+    from urllib.parse import urlsplit
+
+    raw = (getattr(settings, "llm_base_url", "") or "").strip()
+    try:
+        host = urlsplit(raw).hostname
+    except ValueError:
+        host = None
+    return {
+        "host": host,
+        "model": (getattr(settings, "model_name", "") or None),
+        "judge_model": (getattr(settings, "judge_model_name", "") or None),
+        # Stated, not implied. Before D-74 the report named a judge model that nothing used,
+        # which published a claim of independence the system did not have.
+        "grounding_judge_is_independent": bool(
+            (getattr(settings, "judge_model_name", "") or "").strip()
+            and (getattr(settings, "judge_model_name", "") or "").strip()
+            != (getattr(settings, "model_name", "") or "").strip()),
     }
 
 
@@ -1513,6 +1551,12 @@ def _markdown(metrics: dict[str, Any]) -> str:
         (f"- Thresholds in use: relevance **{run['thresholds']['relevance_threshold']}**, "
          f"confidence **{run['thresholds']['confidence_threshold']}**, "
          f"top_k {run['thresholds']['retrieval_top_k']}  "),
+        (f"- Provider: **{run['provider']['host'] or 'none configured'}**, model "
+         f"`{run['provider']['model'] or '—'}`, grounding judge "
+         f"`{run['provider']['judge_model'] or run['provider']['model'] or '—'}`"
+         + ("  " if run["provider"]["grounding_judge_is_independent"] else
+            "  \n  *The grounding check runs on the drafting model, so it is not an independent "
+            "check. Set `JUDGE_MODEL_NAME` to a different model to make it one (D-74).*")),
         f"- Wall time: {run['wall_seconds']} s  ",
     ]
     # R5: above the figures it is about. `gate-openai-2` printed p95 95.7 ms against NFR-01's

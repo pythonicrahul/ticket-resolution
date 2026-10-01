@@ -10,10 +10,32 @@ A support system for CloudServe Solutions (Forward Deployed AI Engineering capst
 
 1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or see https://docs.astral.sh/uv/).
 2. Install dependencies: `uv sync`
-3. Configure: `cp .env.example .env`, then set `LLM_API_KEY`. **Groq is the provider that works**:
-   its free tier gives per-account limits, while OpenRouter's free endpoints share one pool that
-   rejected every request when this was measured (D-47). `.env.example` carries the model ids and
-   the reason for each.
+3. Configure: `cp .env.example .env`, then set `LLM_API_KEY`. **The default provider is OpenAI**:
+
+   ```
+   LLM_BASE_URL=https://api.openai.com/v1
+   MODEL_NAME=gpt-4o-mini          # drafting (PR-01) and the handover note (PR-02)
+   JUDGE_MODEL_NAME=gpt-4.1-mini   # the grounding check (PR-03), deliberately a different model
+   ```
+
+   **Why a paid provider, when the Build Specification says free tiers only:** the free tiers
+   throttled so heavily that development and testing became very challenging. OpenRouter's free
+   endpoints refused 20 consecutive requests from a shared pool (D-46), and Groq's free tier
+   escalated 21 of 80 tickets without attempting them — still 8 of 65 after the client learned to
+   pace itself (D-54). Gate runs were unrepeatable and the numbers measured throttling rather than
+   quality. This is raised rather than done quietly: D-55 amends NFR-07, and a full 80-ticket run
+   costs about **$0.03**.
+
+   `.env.example` also sets the paths the project needs — `DOCS_PATH`,
+   `TRAINING_TICKETS_PATH`, `CHROMA_PATH`, `DECISION_LOG_PATH`, `CLASSIFIER_PATH`. Copying it is
+   enough; if you edit `.env` by hand, keep `TRAINING_TICKETS_PATH`, because step 4 needs it and
+   so does the report's "classification by wording" section (R8).
+
+   **The free route still works** if you prefer it. `.env.example` carries the values commented
+   out, with the model ids for each: `api.groq.com` (per-account limits, the better of the two)
+   and `openrouter.ai` (a shared pool, which refused every request when it was measured). A throttled run **escalates rather than fails**
+   (FR-15, A11): every ticket still ends as a logged decision, with reason `provider_unavailable`
+   for the ones the provider would not take.
 4. **Train the classifier**: `uv run python scripts/train_classifier.py`. It fits on
    `data/development_tickets.json` and writes `storage/classifier.joblib` (about a minute). The
    harness never trains during a run, so without this it refuses to start — a missing model is a
@@ -34,9 +56,32 @@ No uv? `python3.14 -m venv .venv && source .venv/bin/activate && pip install -r 
 The harness accepts any ticket file with the documented schema: point `--input` at it. No data file
 name is hardcoded anywhere.
 
-**Pace.** The free tier allows 8000 tokens a minute, and an answered ticket costs up to three model
-calls (draft, grounding judge, handover), so a full 80-ticket run takes 20-30 minutes. Replies are
-cached by prompt and content, so a second run over the same tickets is nearly free.
+**Pace.** How many model calls a ticket costs depends on how far it gets, which is NFR-07's point:
+
+| ticket | calls | which |
+|---|---|---|
+| answered | 2 | draft (PR-01), grounding judge (PR-03) |
+| escalated by rule, before drafting | **1** | handover note (PR-02) only |
+| drafted, then refused by the drafter | 2 | draft, handover |
+| drafted, then blocked by the grounding check | 3 | draft, judge, handover |
+
+Those are floors. `complete_structured` is allowed **one repair attempt** when a reply does not
+parse, and the transport retries a timeout or a 5xx up to `LLM_MAX_RETRIES` — and `model_calls`
+counts provider *requests*, so a ticket can cost three or four. A figure above
+`2 × answered + escalations` is the retries, not broken accounting.
+
+A measured 80-ticket run on OpenAI (`api.openai.com`, `gpt-4o-mini` + `gpt-4.1-mini`) made
+**155 calls** — 1.94 per ticket, not 3 — because 14 tickets escalated
+by rule and never reached the drafter. It took **319 s** and about **$0.03** — measured on 2026-10-01 with `gpt-4o-mini` for both
+roles, before `JUDGE_MODEL_NAME` was wired (D-74), so a run with an independent judge costs
+somewhat more. No committed report carries a token or cost figure; the arithmetic is in D-68. Its latency was
+median **4.1 s** and p95 **6.5 s** per ticket, which **misses NFR-01's 3-second target**; the figure
+and its cause are in every report's gaps list (D-68). On a free tier the same run takes 20–30
+minutes if it finishes at all, because the per-minute limit binds rather than the model.
+
+Replies are cached by prompt and content, so a second run over the same tickets makes no provider
+call and is free. A cached run is **not a timing measurement** and the report marks it as a replay;
+use `--no-cache` for timing, which neither reads nor writes the cache (D-68).
 
 **Stopping it.** `touch storage/KILL_SWITCH` stops every automatic reply from the next ticket
 onwards; every ticket then escalates with that reason recorded. Delete the file to resume (FR-16).

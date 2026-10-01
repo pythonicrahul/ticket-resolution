@@ -2,6 +2,15 @@
 
 Source: `Stage_2_PRD_v1.docx`. Keep this file and the workbook in sync; changes go through the Stage 5 revision log.
 
+## Revision log
+
+| date | requirement | change | decision |
+|---|---|---|---|
+| 2026-09-28 | **NFR-07** | Zero spend → a paid runtime model within a stated budget. Raised rather than done quietly: the Build Specification says free tiers only, and the free-tier path is kept working. | [D-55](decisions.md), with the evidence in D-46 and D-54 |
+| 2026-10-01 | **NFR-01** | No change to the target. Recorded as **measured and missed**: p95 5,754 ms on the automated path against < 3 s, because an answered ticket costs two provider round trips to a hosted model. NFR-01's own verification clause asks for the measured figure and its cause when it cannot be met, and every report's gaps list now carries it. | [D-68](decisions.md) |
+
+`CLAUDE.md`'s non-negotiable list still reads "Runtime model is a free tier only", which is now inconsistent with NFR-07 as amended. That file is the author's, so it is flagged here rather than edited (review row R9).
+
 **1 Document control**
 
 | **Field**   | **Value**         |
@@ -70,7 +79,7 @@ These describe how well the system must do the things it does. They are frequent
 | NFR-04 | Privacy      | Zero private data in outbound replies. The guardrail blocks, it does not redact. No credentials in code or history.                 | Scan every outbound reply; engineered PII tickets; secret scan of the repo.                                                                  |
 | NFR-05 | Auditability | 100% of decisions logged, with prompt version and requirement IDs.                                                                  | Metrics report reconciles decisions against tickets.                                                                                         |
 | NFR-06 | Fairness     | Under 5 percentage points of difference in resolution rate and quality across tier, fluency, region and channel.                    | Segment table in every metrics report, with sample sizes. Small segments (8 enterprise tickets in validation) are flagged as low confidence. |
-| NFR-07 | Cost         | Zero spend: free tiers only. Rules and cache before model calls; must-escalate tickets need no generation call.                     | The run log records the number of model calls and cache hits. A full run stays within the free-tier limits.                                  |
+| NFR-07 | Cost         | ~~Zero spend: free tiers only.~~ **Amended 2026-09-28 by the author (D-55): a paid runtime model within a stated budget.** The free tiers throttled so heavily that development and testing became very challenging — OpenRouter's shared pool refused 20 consecutive requests (D-46) and Groq's free tier escalated 21 of 80 tickets without attempting them (D-54), so gate runs were unrepeatable and the figures measured throttling rather than quality. Rules and cache before model calls; must-escalate tickets need no generation call. | The run log records the number of model calls and cache hits, and every metrics report names the provider host and models. A measured 80-ticket run: 155 calls, about **$0.03** (D-68). **The free-tier path is kept working and documented** (`.env.example`, README step 3). |
 | NFR-08 | Determinism  | The same input gives the same routing decision: temperature 0, fixed prompt versions, cached responses.                             | Run the same ticket twice and compare decisions (A5).                                                                                        |
 | NFR-09 | Portability  | Runs from a clean checkout by following the README, on a machine that is not the author's.                                          | Clone into an empty directory and follow the README literally (A1); CI runs the tests on every push.                                         |
 

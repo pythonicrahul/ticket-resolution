@@ -1962,3 +1962,76 @@ normalisation is kept because it is the right key for a file nobody has seen, an
 that instead of citing a pair that does not support it.
 
 `uv run pytest -q` → **647 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R9 · One default provider, and three claims that were not true (NFR-07, NFR-09, A1)
+
+The README said **"Groq is the provider that works"** while `.env.example` shipped OpenAI values and D-55
+recorded the decision to pay for OpenAI. An assessor following the README literally would point the system
+at the provider this project measured and rejected — Groq's free tier escalated 21 of 80 tickets without
+attempting them.
+
+**Files changed.** `README.md`, `.env.example`, `docs/PRD.md`, `docs/decisions.md` (D-54, D-55 amended;
+D-74/75/76 added), `src/ticketing_agent/config.py`, `src/ticketing_agent/guardrails.py`,
+`evaluation/harness.py`, `tests/test_docs_consistency.py`, `tests/test_fr14_harness.py`.
+
+**Tests added (9).** `test_T_R9_1`, `_1b`, `_1c`, `_2`, `_2b`, `_2c`, `_3`, `_4`, `_5`, `_6`, `_7`, `_8`.
+**659 passing.**
+
+### I wrote a false claim into the README while fixing one
+
+My first Pace section said "two model calls for an answered ticket and a third for an escalated one",
+which implies 195 calls for the 80-ticket run. The run made **155**. A ticket escalated by rule never
+reaches the drafter and costs **one** call — which is precisely the NFR-07 property the section exists to
+explain, and I had written over it. Corrected against the live run, and `T-R9-3` now holds every number
+the README quotes against a recorded run.
+
+### The review found three highs, and the first is the serious one
+
+1. **`JUDGE_MODEL_NAME` was dead configuration — and R9 had just made the claim machine-readable.**
+   `.env.example` has carried it since D-55 with the comment "a **different** model on purpose: FR-12's
+   grounding check is not independent" otherwise, and **nothing read it**. `GroundingJudge.check` passed
+   no `model=`, so PR-03 ran on `MODEL_NAME`: the drafting model marking its own homework. The cache
+   proves it — 374 recorded responses, **not one** `gpt-4.1-mini`. Putting the provider in the report
+   turned a stale comment into a published claim of independence the system did not have. Wired it rather
+   than deleting the claim; verified by running it, which wrote the first two `gpt-4.1-mini` responses in
+   this project's history. D-74, with the two consequences for R13: every cached grounding response is now
+   orphaned, and the $0.03 figure predates the independent judge.
+2. **`.env.example` had no `LLM_API_KEY=` line.** Step 3 says to set it and the variable was not in the
+   file to set. And with no key every ticket escalated `provider_unavailable` with **exit 0**, so
+   `metrics.md` reported 80 of 80 escalated as though it were a result. FR-15's behaviour is right for a
+   provider that fails and wrong for one never configured. `require_api_key()` refuses now, beside the
+   `require_model()` check that was already there — the same treatment the classifier has had all along.
+   D-75.
+3. **The PRD still said "Zero spend: free tiers only".** D-55's own words: "the PRD revision has to record
+   it rather than let it drift, because the assessment gate checks the claim." The drift was in the tree
+   with the source-of-truth document on the wrong side, and `T-R9-1` reads the README, `.env.example` and
+   D-55 and deliberately not the PRD. The PRD now has a revision log, and NFR-07 carries the amendment
+   with the original struck through rather than erased. D-76.
+
+### Four mediums, four lows
+
+`.env.example` claimed "roughly 250 calls at about 2k tokens each — a few tens of cents" against the
+README's 155 calls and $0.03; the repo's own responses average ~800 tokens a call, so the README was right
+and a reader budgeting from `.env.example` would plan for ten times the spend. D-54 still documented
+`_RateLimiter` and two settings that do not exist, and D-55 claimed "the metrics report now carries an
+estimated cost" — it does not; both are struck through with the correction rather than rewritten. The call
+table is now marked as a **floor**, because a repair attempt and retries both add provider requests. The
+in-code default base URL was still `openrouter.ai`, so commenting out `LLM_BASE_URL` silently pointed an
+OpenAI key at the provider that refused every request. `T-R9-2c` asserted its own fixture's default rather
+than any behaviour. `T-R9-1b`'s cost assertion could not fail on one deletion. And the synthetic key in
+`T-R9-2b` used an `sk-` prefix, which is exactly what a secret scanner looks for.
+
+### Not done, and why
+
+R9's "Do" list asks for Groq's `PROVIDER_TOKENS_PER_MINUTE` / `PROVIDER_REQUESTS_PER_MINUTE` settings to
+be documented. **They do not exist** — the author had the pacing removed, and D-54 records that what
+survived is a 429 no longer opening the circuit breaker. Documenting a setting that is not there is worse
+than documenting none; `T-R9-1c` pins their absence from the README.
+
+**`CLAUDE.md` still lists "Runtime model is a free tier only"**, which is now inconsistent with NFR-07 as
+amended. That file is the author's, so the inconsistency is flagged in the PRD's revision log rather than
+edited away.
+
+`uv run pytest -q` → **659 passed**. `uv run ruff check .` → clean.

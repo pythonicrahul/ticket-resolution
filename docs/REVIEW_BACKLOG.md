@@ -27,7 +27,7 @@ the top of that file and in .claude/commands/next-feature.md. Stop at any HUMAN,
 | R6 | Report "answered but labelled escalate / unanswerable" | FR-14, FR-02, NFR-03 | R4 | build | DONE |
 | R7 | Widen the money rule to disputed and unrecognised charges; escalate compliance-grade data-residency questions | FR-03, FR-09 | R1 | build | DONE |
 | R8 | Report classification on unseen wording, not only on the validation file | FR-08, NFR-03 | R4 | build | DONE |
-| R9 | Provider: OpenAI is the default, and every document says so and why | NFR-07, NFR-09, A1 | R1 | build | TODO |
+| R9 | Provider: OpenAI is the default, and every document says so and why | NFR-07, NFR-09, A1 | R1 | build | DONE |
 | R10 | Independent review of rows 16 and 17 (API, dashboard) | FR-04, FR-05, NFR-05 | R2 | build | TODO |
 | R11 | Build and start the Docker stack once, or remove it from the README | NFR-09, A1 | R9 | build | TODO |
 | R12 | Housekeeping: `.archify/` | — | — | build | TODO |
