@@ -53,6 +53,10 @@ TARGETS: tuple[tuple[str, str, str], ...] = (
     ("Hallucination rate", "—", "≤5% (human review)"),
     ("Citation accuracy", "—", "≥95% (human review)"),
     ("Private data in outbound text", "—", "0"),
+    # R6: the Dataset Guide says `answerable_from_docs` exists to measure "whether your system
+    # correctly recognises questions it cannot ground". There is no pack target for it, so the
+    # column reads "—" and the figure is reported rather than graded.
+    ("Answered against the label", "—", "—"),
     ("Cross-segment variation", "—", "<5 points"),
 )
 
@@ -573,6 +577,7 @@ def _technical(results: list[TicketResult], scored: list[TicketResult],
         "classification": (_per_class(predictions) if predictions else
                            {"not_computable": _why_no_classification(results, scored)}),
         "calibration": _calibration(scored),
+        "answered_against_the_labels": _against_the_labels(scored, answered),
         "retrieval_hit_rate_pct": _pct(hits, len(retrieval)) if retrieval else None,
         "retrieval_scored_tickets": len(retrieval),
         "route_agreement_pct": _pct(agreed, len(route_agreement)) if route_agreement else None,
@@ -619,6 +624,143 @@ def _route_agreement_note(results: list[TicketResult], scored: list[TicketResult
                 "than agreement, and it says nothing about whether the label or the system is "
                 "right on a disagreement.")
     return base + detail
+
+
+def _against_the_labels(scored: list[TicketResult],
+                        answered: list[TicketResult]) -> dict[str, Any]:
+    """R6: the answers the supplied labels disagree with, named.
+
+    In `gate-openai-2` (the 2026-09-28 replay), **14 of 42** auto-answers went to tickets
+    labelled `expected_route: escalate`, and 13 of those were labelled
+    `answerable_from_docs: false` -- the field the Dataset Guide says exists to measure
+    "whether your system correctly recognises questions it cannot ground". The harness reported
+    nothing on any of it, so the most interesting disagreement between the system and the
+    labels was invisible in the one artefact A10 is judged on. (The counts move with the
+    provider's text; see D-68.)
+
+    Every figure needs labels, so each row carries **its own** denominator and says how many
+    tickets could be scored for it. An unlabelled file gets `not_computable` and no counts: a
+    zero meaning "nothing was checked" is worse than an absent figure (D-15, FR-14 section 3.7).
+    """
+    if not scored:
+        return {"not_computable": ("no labels in the input file, so no answer can be compared "
+                                   "with what the labels expected")}
+
+    # By outcome, not by ticket id: ids are not unique (`ingest` keeps a duplicate and flags it
+    # with `duplicate_ticket_id`, D-12), so an id-based match would name an escalated ticket as
+    # an answer that was never sent, and inflate every denominator with it.
+    answered_scored = [r for r in scored if r.outcome.decision == "auto_respond"]
+
+    route_known = [r for r in answered_scored if r.labels.get("expected_route")]
+    groundable_known = [r for r in answered_scored
+                        if isinstance(r.labels.get("answerable_from_docs"), bool)]
+    article_known = [r for r in answered_scored if r.labels.get("expected_doc_ids")]
+    forbidden_known = [r for r in answered_scored
+                       if isinstance(r.labels.get("must_not_auto_respond"), bool)]
+
+    wrong_route = [r for r in route_known if r.labels["expected_route"] == "escalate"]
+    # `is False`, not falsy: a missing label is not a claim that the ticket is ungroundable,
+    # which is why the denominator above counts only the tickets that carry a boolean.
+    ungroundable = [r for r in groundable_known if r.labels["answerable_from_docs"] is False]
+    missed_article = [
+        r for r in article_known
+        if not (set(r.labels["expected_doc_ids"]) & {_doc_of(c) for c in r.outcome.citations})
+    ]
+    forbidden = [r for r in forbidden_known if r.labels["must_not_auto_respond"] is True]
+
+    routes = ("auto_respond", "escalate")
+    matrix: dict[str, dict[str, int]] = {
+        expected: dict.fromkeys(routes, 0) for expected in routes}
+    other = 0
+    for result in scored:
+        expected = result.labels.get("expected_route")
+        actual = result.outcome.decision
+        if expected in matrix and actual in routes:
+            matrix[expected][actual] += 1
+        else:
+            other += 1
+
+    return {
+        "labelled_tickets": len(scored),
+        "answered_and_labelled": len(answered_scored),
+        "answered_but_labelled_escalate": _disagreement(wrong_route, route_known),
+        "answered_but_not_answerable_from_docs": _disagreement(ungroundable, groundable_known),
+        "answered_citing_no_expected_article": _disagreement(missed_article, article_known),
+        # The one label that is a requirement breach rather than a question for a human.
+        "answered_but_must_not_auto_respond": _disagreement(forbidden, forbidden_known),
+        "confusion_against_expected_route": matrix,
+        "outside_the_matrix": other,
+        "note": _against_note(wrong_route, ungroundable, matrix, forbidden),
+    }
+
+
+def _against_note(wrong_route: list[TicketResult], ungroundable: list[TicketResult],
+                  matrix: dict[str, dict[str, int]],
+                  forbidden: list[TicketResult]) -> str:
+    """The sentences a reader needs to interpret the table without guessing.
+
+    Every claim here is **computed**, not asserted. An earlier version stated that the first two
+    rows naming the same tickets was "a fact about the labels", on a branch that fired whenever
+    the two answered subsets happened to coincide -- including by accident on an unseen file --
+    while never examining the labels at all. The same went for "it is the larger number here".
+    """
+    parts = [
+        ("The labels are the pack's, not this system's. A disagreement is a question for a "
+         "human -- the label may be wrong, or the answer may be -- and the ids are listed so "
+         "it can be answered rather than argued about. `must_not_auto_respond` means something "
+         "narrower in the pack data than in this corpus (D-20)."),
+    ]
+    if forbidden:
+        parts.append(
+            f"**{len(forbidden)} answered ticket(s) are labelled `must_not_auto_respond`.** "
+            f"That is not a difference of opinion about a label: it is the one row here that "
+            f"would be an FR-02 breach, and it needs reading before anything else.")
+    route_ids = {r.ticket.ticket_id for r in wrong_route}
+    ground_ids = {r.ticket.ticket_id for r in ungroundable}
+    if route_ids and route_ids == ground_ids:
+        parts.append(
+            "The first two rows name the same tickets. That is a fact about the labels in this "
+            "file rather than a duplicated row: every ticket answered against its route label "
+            "is also one the labels call ungroundable.")
+    elif route_ids and ground_ids and ground_ids < route_ids:
+        parts.append(
+            f"Every ticket in the second row is also in the first: {len(ground_ids)} of "
+            f"{len(route_ids)}.")
+    other_way = matrix["auto_respond"]["escalate"]
+    if other_way:
+        comparison = ("and it is the larger number here" if other_way > len(wrong_route)
+                      else "which the row did not ask about")
+        parts.append(
+            f"The matrix also shows **{other_way}** ticket(s) the labels expected to be "
+            f"answered and this run escalated, {comparison}. The same question applies to them.")
+    return " ".join(parts)
+
+
+def _disagreement(matching: list[TicketResult],
+                  population: list[TicketResult]) -> dict[str, Any]:
+    """One disagreement: how many, out of how many **could carry this label**, and which.
+
+    The population is per-row, not the whole answered set. `answered_citing_no_expected_article`
+    can only be judged on tickets that have an `expected_doc_ids` -- 28 of the 43 answered in
+    the validation run -- and dividing by 43 printed 2.3% where the figure is 3.6%. That cell
+    sits beside NFR-03's citation-accuracy row and will be read as a citation figure. The
+    harness already takes retrieval hit rate's denominator this way; this now matches.
+    """
+    return {
+        "count": len(matching),
+        "scored_for_this": len(population),
+        "pct_of_scored": _pct(len(matching), len(population)),
+        "ticket_ids": sorted(r.ticket.ticket_id for r in matching),
+    }
+
+
+def _doc_of(citation: str) -> str:
+    """`DOC-BILL-002#2` -> `DOC-BILL-002`. `expected_doc_ids` are articles, not chunks.
+
+    Stripped, as `retrieve.resolve` strips its input: stray whitespace on a citation would
+    otherwise produce a disagreement that is a formatting artefact and not a disagreement.
+    """
+    return citation.strip().split("#", 1)[0]
 
 
 def _why_no_classification(results: list[TicketResult],
@@ -830,6 +972,7 @@ def _results_table(results: list[TicketResult], answered: list[TicketResult],
         "Private data in outbound text": str(leaked),
         "Cross-segment variation": ("not measurable" if variation is None
                                     else f"{variation[1]} points ({variation[0]})"),
+        "Answered against the label": _against_the_labels_cell(technical),
     }
     confidence = {
         "First contact resolution (proxy)": (
@@ -846,6 +989,10 @@ def _results_table(results: list[TicketResult], answered: list[TicketResult],
             f"the worst of the {len(segments)} dimensions; per-dimension figures with sample "
             f"sizes are in the segments section, and small segments are flagged there"
             if variation is not None else "fewer than two segments on every dimension"),
+        "Answered against the label": (
+            (technical.get("answered_against_the_labels") or {}).get("not_computable")
+            or "the ids are in the Technical section; a disagreement is a question for a human, "
+               "not a score"),
     }
     return [
         {"measure": measure, "baseline": baseline, "target": target,
@@ -869,6 +1016,22 @@ def _private_data_confidence(answered: list[TicketResult], detections: int) -> s
         return (f"{base}. {detections} draft(s) failed that check and were blocked, which is "
                 f"FR-12 working; the blocks are in the Governance table")
     return f"{base}; no draft failed that check in this run either"
+
+
+def _against_the_labels_cell(technical: dict[str, Any]) -> str:
+    """One cell: how many answers the labels disagree with, and on what."""
+    block = technical.get("answered_against_the_labels") or {}
+    if block.get("not_computable"):
+        return "not computable"
+    route = block["answered_but_labelled_escalate"]
+    docs = block["answered_but_not_answerable_from_docs"]
+    article = block["answered_citing_no_expected_article"]
+    forbidden = block["answered_but_must_not_auto_respond"]
+    lead = (f"**{forbidden['count']} labelled must_not_auto_respond**, " if forbidden["count"]
+            else "")
+    return (f"{lead}{route['count']} labelled escalate, {docs['count']} labelled not answerable "
+            f"from docs, {article['count']} citing no expected article, of "
+            f"{block['answered_and_labelled']} answered and labelled")
 
 
 def _worst_variation(segments: dict[str, Any]) -> tuple[str, float] | None:
@@ -1275,6 +1438,43 @@ def _markdown(metrics: dict[str, Any]) -> str:
         ]
     else:
         lines.append(f"*Not computable: {calibration.get('not_computable', 'no data')}*")
+
+    # R6: the ids, in the report a human reads. A count without them cannot be acted on.
+    against = technical.get("answered_against_the_labels") or {}
+    lines += ["", "### Answered against the labels (R6)", ""]
+    if against.get("not_computable"):
+        lines.append(f"*Not computable: {against['not_computable']}.*")
+    else:
+        lines += ["| disagreement | count | of those that could be scored | tickets |",
+                  "|---|---|---|---|"]
+        for label, key in (
+                ("**Answered, label says must_not_auto_respond**",
+                 "answered_but_must_not_auto_respond"),
+                ("Answered, label says escalate", "answered_but_labelled_escalate"),
+                ("Answered, label says not answerable from docs",
+                 "answered_but_not_answerable_from_docs"),
+                ("Answered, cited no expected article", "answered_citing_no_expected_article")):
+            row = against[key]
+            ids = ", ".join(row["ticket_ids"]) if row["ticket_ids"] else "—"
+            lines.append(f"| {label} | {row['count']} | {_fmt(row['pct_of_scored'])} of "
+                         f"{row['scored_for_this']} | {ids} |")
+        matrix = against["confusion_against_expected_route"]
+        lines += [
+            "",
+            "Decision against the labelled `expected_route`:",
+            "",
+            "| expected ↓ / actual → | auto_respond | escalate |",
+            "|---|---|---|",
+            (f"| auto_respond | {matrix['auto_respond']['auto_respond']} "
+             f"| {matrix['auto_respond']['escalate']} |"),
+            (f"| escalate | {matrix['escalate']['auto_respond']} "
+             f"| {matrix['escalate']['escalate']} |"),
+        ]
+        if against["outside_the_matrix"]:
+            lines.append("")
+            lines.append(f"*{against['outside_the_matrix']} ticket(s) fell outside the matrix: "
+                         f"no `expected_route` label, or a decision that is neither route.*")
+        lines += ["", f"*{against['note']}*"]
 
     lines += [
         "",

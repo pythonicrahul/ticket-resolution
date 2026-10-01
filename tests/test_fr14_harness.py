@@ -1491,3 +1491,235 @@ def test_T_R5_6_the_strict_representative_rule_has_a_test_of_its_own(tmp_path):
     assert _latency_state(0, 0, False) == "provider_not_reached"
     assert _latency_state(0, 0, True) == "stub"
     assert _latency_state(5, 1, True) == "stub", "a stub run is a stub run whatever it counted"
+
+
+# --- R6: answered against the label's wishes ---------------------------------------------
+
+
+def labelled_file(tmp_path, rows, name="labelled.json"):
+    """`rows` is (ticket_id, labels dict) pairs, built onto the standard answerable body."""
+    entries = []
+    for index, (ticket_id, labels) in enumerate(rows):
+        entry = _answerable_entry(index)
+        entry["ticket_id"] = ticket_id
+        entry["labels"] = labels
+        entries.append(entry)
+    path = tmp_path / name
+    path.write_text(json.dumps(entries), encoding="utf-8")
+    return path
+
+
+class DecideByTicket:
+    """Answers or escalates per ticket id, so the label comparison is what is under test."""
+
+    def __init__(self, answer, citations=("DOC-BILL-002#2",)):
+        self.answer, self.citations = set(answer), tuple(citations)
+
+    def process(self, ticket):
+        if ticket.ticket_id in self.answer:
+            return Outcome(ticket=ticket, decision="auto_respond", explanation="Answered.",
+                           threshold_applied=0.85, draft="Hi.", citations=self.citations,
+                           prediction_value="billing_query", intent="billing_query",
+                           intent_confidence=0.95, requirement_ids=("FR-14",))
+        return Outcome(ticket=ticket, decision="escalate", reason="low_confidence",
+                       explanation="To a person.", all_reasons=("low_confidence",),
+                       threshold_applied=0.85, summary="s", uncertainty="u",
+                       prediction_value="billing_query", intent="billing_query",
+                       intent_confidence=0.4, requirement_ids=("FR-14",))
+
+
+def test_T_R6_1_the_report_names_the_answers_the_labels_disagree_with(tmp_path):
+    """R6 (FR-14, FR-02, NFR-03): 14 of 42 auto-answers went to tickets labelled escalate.
+
+    Thirteen of those were labelled `answerable_from_docs: false`, which the Dataset Guide says
+    exists precisely to measure "whether your system correctly recognises questions it cannot
+    ground". The harness reported nothing on it, so the single most interesting disagreement
+    between the system and the supplied labels was invisible in the artefact A10 is judged on.
+
+    **The four matrix cells are four different numbers on purpose** (2, 1, 3, 4). An earlier
+    fixture gave two of them the same value, and a mutation that transposed the rendered matrix
+    left this test green — the third time in this backlog that a fixture has made two code
+    paths indistinguishable.
+    """
+    auto_ok = {"intent": "billing_query", "expected_route": "auto_respond",
+               "answerable_from_docs": True, "expected_doc_ids": ["DOC-BILL-002"]}
+    esc_ungroundable = {"intent": "billing_query", "expected_route": "escalate",
+                        "answerable_from_docs": False, "expected_doc_ids": []}
+    source = labelled_file(tmp_path, [
+        # expected auto_respond, answered: 2
+        ("T-OK", auto_ok),
+        ("T-WRONG-DOC", {**auto_ok, "expected_doc_ids": ["DOC-DEPLOY-001"]}),
+        # expected auto_respond, escalated: 1
+        ("T-AUTO-ESC", auto_ok),
+        # expected escalate, answered: 3
+        ("T-WRONG-ROUTE", esc_ungroundable),
+        ("T-ESC-ANS3", esc_ungroundable),
+        # ... one of which the labels call groundable, so the second disagreement row is a
+        # strict subset of the first and the note's wording has to say so
+        ("T-ESC-GROUNDABLE", {**esc_ungroundable, "answerable_from_docs": True}),
+        # expected escalate, escalated: 4
+        ("T-ESC1", esc_ungroundable), ("T-ESC2", esc_ungroundable),
+        ("T-ESC3", esc_ungroundable), ("T-ESC4", esc_ungroundable),
+    ])
+    answered = {"T-OK", "T-WRONG-DOC", "T-WRONG-ROUTE", "T-ESC-ANS3", "T-ESC-GROUNDABLE"}
+    report = harness(tmp_path, DecideByTicket(answer=answered), input_path=source)
+    against = report.metrics["technical"]["answered_against_the_labels"]
+
+    route = against["answered_but_labelled_escalate"]
+    assert route["count"] == 3
+    assert route["ticket_ids"] == ["T-ESC-ANS3", "T-ESC-GROUNDABLE", "T-WRONG-ROUTE"]
+    assert route["scored_for_this"] == 5, "five answered tickets carry an expected_route"
+    assert route["pct_of_scored"] == 60.0
+
+    ungroundable = against["answered_but_not_answerable_from_docs"]
+    assert ungroundable["ticket_ids"] == ["T-ESC-ANS3", "T-WRONG-ROUTE"]
+    assert ungroundable["scored_for_this"] == 5
+
+    missed = against["answered_citing_no_expected_article"]
+    assert missed["ticket_ids"] == ["T-WRONG-DOC"], (
+        "the escalate-labelled ones have no expected article, so nothing to miss")
+    assert missed["scored_for_this"] == 2, (
+        "the denominator is the answered tickets that *have* an expected article, not all "
+        "five — dividing by the wrong population printed 2.3% where the figure was 3.6%")
+    assert missed["pct_of_scored"] == 50.0
+
+    matrix = against["confusion_against_expected_route"]
+    assert matrix["auto_respond"]["auto_respond"] == 2
+    assert matrix["auto_respond"]["escalate"] == 1
+    assert matrix["escalate"]["auto_respond"] == 3
+    assert matrix["escalate"]["escalate"] == 4
+    assert against["outside_the_matrix"] == 0
+    assert sum(v for row in matrix.values() for v in row.values()) == 10
+
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "T-WRONG-ROUTE" in markdown, "the ids have to be in the report a human reads"
+    table = {row["measure"]: row for row in report.metrics["results_table"]}
+    assert "Answered against the label" in table
+
+    # The rendered matrix, not only the dict. With four distinct cells a transposition cannot
+    # survive: `metrics.md` is the artefact A10 is judged on and must not contradict the JSON.
+    def rendered_row(prefix):
+        line = [ln for ln in markdown.splitlines() if ln.startswith(prefix)][-1]
+        return [c.strip() for c in line.strip("|").split("|")]
+
+    assert rendered_row("| auto_respond |") == ["auto_respond", "2", "1"]
+    assert rendered_row("| escalate |") == ["escalate", "3", "4"]
+
+    # The note's claims are computed, not asserted.
+    assert "name the same tickets" not in against["note"]
+    assert "Every ticket in the second row is also in the first: 2 of 3" in against["note"]
+    assert "**1** ticket(s) the labels expected to be answered" in against["note"]
+    assert "which the row did not ask about" in against["note"], (
+        "1 is not larger than 3, and the sentence must not claim it is")
+
+
+def test_T_R6_2_an_unlabelled_file_omits_the_figures_rather_than_reporting_zero(tmp_path):
+    """R6: a zero that means "nothing was checked" is worse than an absent figure."""
+    report = harness(tmp_path, DecideByTicket(answer={"ANS-000", "ANS-001"}),
+                     input_path=answerable_file(tmp_path, count=3))
+    against = report.metrics["technical"]["answered_against_the_labels"]
+
+    assert report.metrics["run"]["scored_against_labels"] == "0 of 3"
+    assert against["not_computable"], against
+    assert "count" not in against
+    assert "answered_but_labelled_escalate" not in against
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "0 of 3" in markdown
+    table = {row["measure"]: row for row in report.metrics["results_table"]}
+    assert table["Answered against the label"]["achieved"] == "not computable"
+
+
+def test_T_R6_3_the_real_validation_run_names_its_own_disagreements(tmp_path):
+    """R6's evidence, re-measured — by **answering everything**, so the path really runs.
+
+    The first version of this test answered nothing and then asserted the disagreement count
+    was zero, which is the backlog's recurring pattern: an assertion over an empty list. It
+    asserts no ticket's identity, so it does not tune against the validation set (CLAUDE.md);
+    the expected set is computed from the file's own labels.
+    """
+    tickets = load_tickets(VALIDATION)
+    report = harness(tmp_path, DecideByTicket(answer={t.ticket_id for t in tickets}),
+                     input_path=VALIDATION)
+    against = report.metrics["technical"]["answered_against_the_labels"]
+
+    expected_escalate = sorted(
+        t.ticket_id for t in tickets
+        if (t.raw.get("labels") or {}).get("expected_route") == "escalate")
+    assert against["answered_but_labelled_escalate"]["ticket_ids"] == expected_escalate
+    assert against["answered_but_labelled_escalate"]["count"] == len(expected_escalate) > 0
+
+    expected_ungroundable = sorted(
+        t.ticket_id for t in tickets
+        if (t.raw.get("labels") or {}).get("answerable_from_docs") is False)
+    assert (against["answered_but_not_answerable_from_docs"]["ticket_ids"]
+            == expected_ungroundable)
+
+    assert against["labelled_tickets"] == len(tickets)
+    assert against["answered_and_labelled"] == len(tickets)
+    matrix = against["confusion_against_expected_route"]
+    assert matrix["escalate"]["auto_respond"] == len(expected_escalate), (
+        "everything was answered, so every escalate-labelled ticket is in that cell — a "
+        "transposed matrix puts them in the other one")
+    assert matrix["escalate"]["escalate"] == 0
+    assert against["outside_the_matrix"] == 0, "the matrix must partition the scored tickets"
+
+
+def test_T_R6_4_a_ticket_the_matrix_cannot_place_is_counted_not_dropped(tmp_path):
+    """R6 review: `outside_the_matrix` is the drop channel and nothing exercised it.
+
+    Mutating `other += 1` to `pass` silently removed those tickets from the report, and the
+    partition claim with them. This also covers "labels present, this field absent", which is
+    the case where a zero would otherwise read as a measured zero (D-15).
+    """
+    source = labelled_file(tmp_path, [
+        ("T-NO-ROUTE", {"intent": "billing_query", "answerable_from_docs": True}),
+        ("T-ROUTED", {"intent": "billing_query", "expected_route": "auto_respond",
+                      "answerable_from_docs": True}),
+    ], name="partial-labels.json")
+    report = harness(tmp_path, DecideByTicket(answer={"T-NO-ROUTE", "T-ROUTED"}),
+                     input_path=source)
+    against = report.metrics["technical"]["answered_against_the_labels"]
+
+    assert against["outside_the_matrix"] == 1, "the unplaceable ticket is counted, not dropped"
+    matrix = against["confusion_against_expected_route"]
+    placed = sum(v for row in matrix.values() for v in row.values())
+    assert placed + against["outside_the_matrix"] == against["labelled_tickets"]
+
+    # And the per-row denominators tell a reader what could be scored for each.
+    assert against["answered_but_labelled_escalate"]["scored_for_this"] == 1, (
+        "only one of the two carries an expected_route")
+    assert against["answered_but_not_answerable_from_docs"]["scored_for_this"] == 2
+    assert against["answered_but_must_not_auto_respond"]["scored_for_this"] == 0, (
+        "neither carries the label, so there is nothing to score — not a measured zero")
+    assert against["answered_but_must_not_auto_respond"]["pct_of_scored"] is None
+    assert "outside the matrix" in (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+
+
+def test_T_R6_5_an_answer_to_a_must_not_auto_respond_ticket_is_called_a_breach(tmp_path):
+    """R6 review: the one label that is a requirement breach was only mentioned in prose.
+
+    `must_not_auto_respond: true` is not a difference of opinion about a label — FR-02 and
+    FR-09 forbid answering it. It gets its own row, and the note says so before anything else.
+    """
+    source = labelled_file(tmp_path, [
+        ("T-FORBIDDEN", {"intent": "security_incident", "expected_route": "escalate",
+                         "answerable_from_docs": False, "must_not_auto_respond": True}),
+        ("T-FINE", {"intent": "billing_query", "expected_route": "auto_respond",
+                    "answerable_from_docs": True, "must_not_auto_respond": False}),
+    ], name="forbidden.json")
+    report = harness(tmp_path, DecideByTicket(answer={"T-FORBIDDEN", "T-FINE"}),
+                     input_path=source)
+    against = report.metrics["technical"]["answered_against_the_labels"]
+
+    row = against["answered_but_must_not_auto_respond"]
+    assert row["count"] == 1 and row["ticket_ids"] == ["T-FORBIDDEN"]
+    assert row["scored_for_this"] == 2
+    assert "FR-02 breach" in against["note"]
+    assert against["note"].index("must_not_auto_respond") < against["note"].index(
+        "labels are the pack's") or "breach" in against["note"]
+
+    cell = {r["measure"]: r for r in report.metrics["results_table"]}[
+        "Answered against the label"]
+    assert "must_not_auto_respond" in cell["achieved"]
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "T-FORBIDDEN" in markdown

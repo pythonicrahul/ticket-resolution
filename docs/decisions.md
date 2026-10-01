@@ -1376,3 +1376,62 @@ figures are now in the report and `latency.nfr01_figure` names the one the requi
 automated path misses NFR-01 by 1.9×; a 25-ticket live timing run measured **7,744 ms**. Either way the
 miss is now a named entry in the gaps list, which is where the one requirement this project has measured
 and failed belonged all along.
+
+## D-69 · The answers the labels disagree with are named, by ticket id (FR-14, FR-02, NFR-03)
+
+The supplied labels carry `expected_route`, `answerable_from_docs`, `expected_doc_ids` and
+`must_not_auto_respond`. The harness scored intent against its label and retrieval against
+`expected_doc_ids`, and reported **nothing** about the routing ones — so in `gate-openai-2`, 14 of 42
+auto-answers went to tickets the labels said should escalate and no artefact said so. The Dataset Guide
+is explicit that `answerable_from_docs` exists to measure "whether your system correctly recognises
+questions it cannot ground"; that measurement was simply not being taken.
+
+Four decisions inside this:
+
+* **Ids, not counts.** A count cannot be acted on and a percentage invites an argument. The report names
+  the tickets so the question — is the label wrong, or is the answer wrong? — can be *answered*. It is a
+  question for a human, and the report says so rather than scoring it: the labels are the pack's, not this
+  system's.
+* **Each row carries its own denominator.** `answered_citing_no_expected_article` can only be judged on
+  answered tickets that *have* an `expected_doc_ids`; dividing by every answered ticket printed 2.3% where
+  the figure is 4.2%, in a cell that sits beside NFR-03's citation-accuracy row and reads as a citation
+  figure. The harness already took retrieval hit rate's denominator this way.
+* **Matched by outcome, never by ticket id.** Ids are not unique — `ingest` keeps a duplicate and flags it
+  (D-12) — so an id-based match would name an escalated ticket as an answer that was never sent.
+* **`must_not_auto_respond` gets its own row and the note's first sentence.** Every other row is a
+  difference of opinion about a label. That one is an FR-02 breach, and it should not be read as one
+  disagreement among four.
+
+**The opposite disagreement is larger, and R6 did not ask about it.** The confusion matrix shows the
+tickets the labels expected to be *answered* and this run escalated — 20 before R7's rules, more after.
+That is answer rate the system may be leaving on the table against an FCR target it is short of, and it
+belongs in front of a human at R13 just as much as the other direction.
+
+## D-70 · Seven identical tickets, two different labels: the validation set contradicts itself
+
+Measuring R7's dispute rule turned up something that belongs here rather than in R7, because it bears on
+every label-agreement figure this project reports.
+
+**Four distinct bodies in `validation_tickets.json` carry contradictory `expected_route` labels across
+their duplicates.** The largest group is seven byte-identical tickets:
+
+| ticket | expected_route | answerable_from_docs |
+|---|---|---|
+| VAL-0072 | `escalate` | false |
+| VAL-0013, 0040, 0041, 0044, 0053, 0065 | `auto_respond` | true |
+
+The text is the same in all seven: *"There are charges on our invoice for a service I do not believe we
+use. Could you explain what these relate to?"* The other three groups are VAL-0012/0034,
+VAL-0024/0075 and VAL-0033/0060/0061. There are 60 distinct bodies across the 80 tickets.
+
+Two consequences, both of which have to be said out loud:
+
+* **No deterministic system can agree with all of them.** NFR-08 requires that the same input routes the
+  same way; these labels require that it does not. Some share of the disagreements D-69 reports is
+  therefore *unachievable*, not a defect.
+* **A route-agreement figure near 100% would be evidence of a bug**, not of quality — it could only be
+  reached by a system that is not deterministic.
+
+This is a property of the supplied data, not a finding about the system, and it is not something to fix by
+tuning: CLAUDE.md forbids tuning against individual validation tickets, and the honest response is to
+report it. R13 has to decide what the gate is measured against knowing it.

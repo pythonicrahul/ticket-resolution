@@ -1771,3 +1771,61 @@ Four lows fixed: `_latency` was computed twice, two lines below the comment forb
 (the note now carries a sample-size clause); and the spec's §2 argument list was a flag short of the code.
 
 `uv run pytest -q` → **550 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R6 · The answers the labels disagree with, named (FR-14, FR-02, NFR-03)
+
+In `gate-openai-2`, 14 of 42 auto-answers went to tickets labelled `expected_route: escalate`, and 13 of
+those were labelled `answerable_from_docs: false` — the field the Dataset Guide says exists to measure
+"whether your system correctly recognises questions it cannot ground". The harness reported nothing on any
+of it.
+
+**Files changed.** `evaluation/harness.py`, `tests/test_fr14_harness.py`, `docs/specs/FR-14.md` §4 and
+items 56–58. D-69, D-70.
+
+**Tests added (5).** `test_T_R6_1` … `_5`. **574 passing.**
+
+Measured on the validation set before R7's rules landed: **15 of 43** answered tickets labelled escalate,
+the same 15 labelled not-answerable, 1 (VAL-0080) citing no expected article — answered from
+`DOC-DEPLOY-003` where the label expects `DOC-DEPLOY-001`, exactly as the row described. The matrix also
+showed **20** tickets the labels expected answered and the system escalated: the larger disagreement, and
+one the row did not ask about.
+
+### The review found two highs
+
+1. **Answered tickets were matched by ticket id string.** Ids are not unique — `ingest` keeps a duplicate
+   and flags it with `duplicate_ticket_id` (D-12) — so on a file with repeated ids an *escalated* ticket
+   would be named in the report as an answer that was never sent, and every denominator inflated with it.
+   A disagreement row that names a ticket wrongly is worse than no row, since the whole point is that the
+   ids let a human settle it. Matched by `outcome.decision` now.
+2. **Numerator and denominator came from different populations.** `answered_citing_no_expected_article`
+   counts only answered tickets that *have* an `expected_doc_ids`, but divided by all answered — printing
+   2.3% where the figure is 4.2%, in a cell that sits beside NFR-03's citation-accuracy row. Every row now
+   carries its own denominator and says how many tickets could be scored for it, which is what the harness
+   already did for retrieval hit rate.
+
+### Six mediums, all fixed
+
+My own `test_T_R6_3` answered nothing and then asserted the disagreement count was zero — an assertion
+over an empty list, the third time this pattern has appeared in this backlog. It answers every ticket now
+and compares against the expected set computed from the file's own labels. `_against_note` **asserted**
+two things it never computed ("a fact about the labels", "it is the larger number here"); both are
+computed now, and the second was simply false whenever the other direction was smaller. The markdown
+rendering of the matrix had no test at all: transposing two cells left `metrics.md` contradicting
+`metrics.json` with the suite green. `outside_the_matrix` — the drop channel — had no test, and neither
+did the "labels present but this field absent" case. And `must_not_auto_respond`, the one label that marks
+a requirement breach rather than a difference of opinion, was mentioned only in prose; it now has its own
+row and the note's first sentence.
+
+**A trap worth naming, because it caught me twice today.** My first fix for the untested matrix *looked*
+right and still passed under mutation — the fixture gave two of the four cells the same value, so
+transposing them changed nothing. The fixture now makes all four distinct (2, 1, 3, 4). This is the same
+shape as R4's single-class precision fixture and R3's `all()` over an empty sequence.
+
+**And an error of my own.** While mutation-testing I ran `git checkout evaluation/harness.py` to revert
+the mutation — on a file holding all of this row's uncommitted work, which it duly destroyed. Recovered by
+re-applying the patch scripts from the scratchpad; verified by the full suite. Mutation checks since then
+copy the file aside and restore from the copy.
+
+`uv run pytest -q` → **574 passed**. `uv run ruff check .` → clean.

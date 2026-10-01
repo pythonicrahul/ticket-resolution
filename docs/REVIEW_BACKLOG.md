@@ -24,7 +24,7 @@ the top of that file and in .claude/commands/next-feature.md. Stop at any HUMAN,
 | R3 | Persist the sent reply and the handover note in the run output | FR-14, FR-13, NFR-03 | R1 | build | DONE |
 | R4 | Make the metrics report describe the system that actually ran | FR-14, A10 | R1 | build | DONE |
 | R5 | Report real latency; mark cache replays as replays | FR-14, NFR-01 | R4 | build | DONE |
-| R6 | Report "answered but labelled escalate / unanswerable" | FR-14, FR-02, NFR-03 | R4 | build | TODO |
+| R6 | Report "answered but labelled escalate / unanswerable" | FR-14, FR-02, NFR-03 | R4 | build | DONE |
 | R7 | Widen the money rule to disputed and unrecognised charges; escalate compliance-grade data-residency questions | FR-03, FR-09 | R1 | build | TODO |
 | R8 | Report classification on unseen wording, not only on the validation file | FR-08, NFR-03 | R4 | build | TODO |
 | R9 | Provider: OpenAI is the default, and every document says so and why | NFR-07, NFR-09, A1 | R1 | build | TODO |
