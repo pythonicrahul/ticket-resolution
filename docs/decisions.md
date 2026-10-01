@@ -1354,9 +1354,12 @@ against the new ones, because the model's text decides `no_cited_article`, `inva
 recorded that the cache had moved. The comment in the code had called the write-through a feature — "warms
 the cache for the next ordinary run" — which is exactly how a hazard gets written down as a convenience.
 
-The September recordings are preserved at `storage/llm_cache.2026-09-28-gate.sqlite` with
-`storage/CACHE_README.md` explaining both files and how to replay either, because the gate sign-off in
-D-57 and the figures in `evaluation/results/gate-openai-2/` were replayed from them. **Which run the gate
+The September recordings are preserved at `storage/llm_cache.2026-09-28-gate.sqlite`, with
+[`docs/provider_cache.md`](provider_cache.md) explaining both files and how to replay either, because the
+gate sign-off in D-57 and the figures in `evaluation/results/gate-openai-2/` were replayed from them.
+**Both the caches and that results directory are git-ignored**, so none of it survives a clone and the
+published figures cannot be reproduced from the repository alone — which is why the explanation is tracked
+even though its subject is not (R12). **Which run the gate
 is signed off on is the R13 checkpoint's decision, not mine.**
 
 **The measurement, taken with the flag (80 validation tickets, 2026-10-01, 319 s wall, 155 provider
@@ -1623,3 +1626,24 @@ measured miss (D-68) is recorded there too, since the same gate checks it.
 `CLAUDE.md` still lists "Runtime model is a free tier only" among the non-negotiables, which is now
 inconsistent with NFR-07 as amended. **That file is the author's**, so the inconsistency is flagged in the
 PRD's revision log rather than edited away here.
+
+## D-77 · A file inside `storage/` cannot be an artefact (R12, NFR-09)
+
+Housekeeping turned up two promises that were true on one machine and false for every reader.
+
+D-68 said the September provider recordings are "preserved at
+`storage/llm_cache.2026-09-28-gate.sqlite` with `storage/CACHE_README.md` explaining both files".
+`storage/` is git-ignored. Neither the caches nor the explanation survives a clone, so the sentence
+described a local convenience as though it were a deliverable. The explanation now lives at
+`docs/provider_cache.md`, which is tracked, and says in its first line that its subject is not — along
+with what a fresh checkout actually gets, which is no cache, no decision log and no index.
+
+Second, **no evaluation report is committed at all**. `evaluation/results/` holds a `.gitkeep` and nothing
+else, while CLAUDE.md explicitly allows "dated reports you choose to keep". The consequence was a test
+that could not fail: `T-R9-3` read `evaluation/results/gate-openai/metrics.json` to check the README's
+figures and `pytest.skip`-ed when it was absent — so on a clean checkout, which is the only state that
+matters for NFR-09, it skipped every time. It reads D-68 now, which is tracked. `.gitignore` carries a
+`!evaluation/results/kept-*/` exception so R13 can commit the run it signs off on.
+
+The general rule, which is what makes this worth a decision: **a document may only point at something a
+reader has.** Everything else has to be reproducible from a command, or stated as unavailable.

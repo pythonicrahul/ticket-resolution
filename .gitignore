@@ -6,8 +6,11 @@ __pycache__/
 .ruff_cache/
 .coverage
 storage/
+# Run output is local, except a dated report deliberately kept as evidence (CLAUDE.md).
+# Nothing is kept yet — review row R13 chooses one, and this is the pattern that lets it in.
 evaluation/results/*
 !evaluation/results/.gitkeep
+!evaluation/results/kept-*/
 .DS_Store
 logs/
 

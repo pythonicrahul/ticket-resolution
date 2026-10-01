@@ -111,34 +111,33 @@ def test_T_R9_1c_the_readme_pace_section_does_not_describe_a_removed_setting(rea
         "the Pace section described only the free tier's token budget")
 
 
-def test_T_R9_3_the_readmes_measured_claims_match_a_recorded_run(readme: str):
+def test_T_R9_3_the_readmes_measured_claims_match_the_recorded_decision(readme: str):
     """Every number the README quotes about a run has to come from one.
 
     My first version of the Pace section said "two model calls for an answered ticket and a
     third for an escalated one", which implies 195 calls for the 80-ticket run. The run made
     **155**: a ticket escalated by rule never reaches the drafter and costs one call, which is
-    exactly the NFR-07 property the section exists to explain. Numbers in a setup document are
-    claims, and this test is what makes them checkable.
+    exactly the NFR-07 property the section exists to explain.
+
+    **Reads D-68, not `evaluation/results/`.** The first version read
+    `evaluation/results/gate-openai/metrics.json` and `pytest.skip`-ed when it was absent — and
+    `evaluation/results/` is git-ignored, so on a clean checkout it skipped every time. A test
+    that cannot fail where it matters is worse than no test (R12). D-68 is tracked and is where
+    the figures actually live.
     """
-    import json
+    decisions = DECISIONS.read_text(encoding="utf-8")
+    d68 = decisions.split("## D-68")[1].split("\n## D-")[0]
 
-    recorded = ROOT / "evaluation" / "results" / "gate-openai" / "metrics.json"
-    if not recorded.exists():  # pragma: no cover - the repo ships this run
-        pytest.skip("no recorded live run in the repository")
-    run = json.loads(recorded.read_text(encoding="utf-8"))
-
-    assert run["volume"]["tickets_processed"] == 80
-    # The README's figures come from the 2026-10-01 --no-cache run, whose own numbers are in
-    # D-68; the committed gate-openai run is the same shape (158 calls over 80 tickets).
-    calls = run["governance"]["model_calls"]
-    assert 1.5 < calls / 80 < 2.5, (
-        f"{calls} calls over 80 tickets is {calls / 80:.2f} per ticket; the README's table has "
-        f"to describe that shape, not three calls per ticket")
-    assert "155 calls" in readme, "the README quotes the measured figure"
-    assert "1.94 per ticket, not 3" in readme, "and says what it is not, because I got it wrong"
-
-    for claim in ("319 s", "$0.03", "4.1 s", "6.5 s", "misses NFR-01"):
+    for claim in ("4,068 ms", "6,532 ms", "155"):
+        assert claim in d68, f"D-68 no longer records {claim}, which the README quotes"
+    for claim in ("155 calls", "1.94 per ticket, not 3", "319 s", "$0.03",
+                  "4.1 s", "6.5 s", "misses NFR-01"):
         assert claim in readme, f"the README dropped a measured claim: {claim}"
+
+    # And the README says where the figures came from, since no report is committed.
+    assert "No committed report carries a token or cost figure" in readme, (
+        "the provenance has to be stated: evaluation/results/ is git-ignored and nothing is "
+        "kept yet (R12, R13)")
 
 
 def test_T_R9_4_the_readme_names_every_env_var_its_own_steps_require(readme: str):
@@ -234,3 +233,34 @@ def test_T_R9_8_the_prd_records_the_amendment_it_was_told_to_record():
     assert "D-68" in prd and "measured and missed" in prd
     # And CLAUDE.md's own copy of the rule is flagged rather than silently edited.
     assert "CLAUDE.md" in prd and "author's" in prd
+
+
+def test_T_R12_1_nothing_the_documents_promise_is_itself_git_ignored():
+    """R12: a file that does not survive a clone cannot be handed to anyone.
+
+    `docs/decisions.md` D-68 says the September recordings are "preserved at
+    `storage/llm_cache.2026-09-28-gate.sqlite`", and I had written the explanation of them into
+    `storage/CACHE_README.md` — inside a git-ignored directory. Both statements were true on one
+    machine and false for every reader. The explanation is tracked now; the caches are not, and
+    the tracked copy says so rather than implying otherwise.
+    """
+    import subprocess
+
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+                             check=True).stdout.split()
+    assert "docs/provider_cache.md" in tracked, (
+        "the explanation of which cache reproduces the published figures has to be tracked")
+
+    cache_doc = (ROOT / "docs" / "provider_cache.md").read_text(encoding="utf-8")
+    assert "git-ignored" in cache_doc
+    assert "survives a clone" in cache_doc, "the reader is told its subject is not tracked"
+    assert "What a fresh checkout gets" in cache_doc, (
+        "a reader needs to be told the figures cannot be reproduced from the repo alone")
+    assert "cannot be reproduced from the" in cache_doc, (
+        "and that the published figures rest on caches a reader does not have")
+
+    # And `.gitignore` carries the exception that lets R13 keep a dated report.
+    ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "!evaluation/results/kept-*/" in ignore
+    assert ".archify/" in ignore, "archify working directories are not a deliverable"
+    assert ".DS_Store" in ignore

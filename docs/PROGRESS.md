@@ -2035,3 +2035,36 @@ amended. That file is the author's, so the inconsistency is flagged in the PRD's
 edited away.
 
 `uv run pytest -q` → **659 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R12 · Housekeeping, which turned out not to be housekeeping
+
+The row asks two things: decide whether `.archify/` is a deliverable, and keep `.DS_Store` out. Both were
+already settled — `.archify/` is git-ignored with the reason beside it, the three published diagrams are
+tracked in `docs/diagrams/`, `.DS_Store` is ignored, and nothing junky is tracked. That took one command
+to confirm.
+
+**Checking the rest of `.gitignore` found two promises that were true on one machine and false for every
+reader.**
+
+1. **D-68 pointed at a file inside `storage/`.** It said the September provider recordings are "preserved
+   at `storage/llm_cache.2026-09-28-gate.sqlite` with `storage/CACHE_README.md` explaining both files".
+   `storage/` is git-ignored: neither the caches nor the explanation survives a clone, so a sentence
+   describing a local convenience was written as though it were a deliverable — and I wrote it. The
+   explanation is now `docs/provider_cache.md`, tracked, and its first line says its subject is not. It
+   also says what a fresh checkout actually gets: no cache, no decision log, no index, every provider call
+   live, and **the published figures not reproducible from the repository alone**.
+2. **No evaluation report is committed at all**, and that had made a test unfalsifiable. `T-R9-3` checked
+   the README's figures against `evaluation/results/gate-openai/metrics.json` and `pytest.skip`-ed when it
+   was missing — and `evaluation/results/` holds only a `.gitkeep`, so on a clean checkout, which is the
+   only state NFR-09 cares about, it skipped every time. It reads D-68 now, which is tracked. CLAUDE.md
+   allows "dated reports you choose to keep", so `.gitignore` gained a `!evaluation/results/kept-*/`
+   exception for R13 to use.
+
+**Tests added (1).** `test_T_R12_1_nothing_the_documents_promise_is_itself_git_ignored` — asserts the
+cache explanation is tracked, says its subject is not, and that the ignore patterns the row asks about are
+present. D-77 records the general rule it enforces: **a document may only point at something a reader
+has**; everything else is reproducible from a command, or stated as unavailable.
+
+`uv run pytest -q` → **660 passed**. `uv run ruff check .` → clean.
