@@ -1693,3 +1693,81 @@ Verified by running it, not only by the suite: a stub run, a rule-only run and a
 yet", "nothing is sent yet", "unbuilt", "not computable yet" or "by construction".
 
 `uv run pytest -q` → **542 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R5 · A replay is not a measurement, and NFR-01 is missed (FR-14, NFR-01)
+
+`gate-openai-2`'s report printed **p95 95.7 ms** against NFR-01's `< 3 s`, off **0 model calls and 162
+cache hits**. The live run of the same 80 tickets had measured p95 **6.7 s**. The report was showing a
+comfortable pass over a miss of more than a factor of two, and nothing in it said the figure was a replay.
+
+**Files changed.** `src/ticketing_agent/provider.py`, `evaluation/harness.py`,
+`tests/test_fr14_harness.py`, `docs/specs/FR-14.md` §2 and items 47–55, D-68, and a new
+`storage/CACHE_README.md`.
+
+**Tests added (8).** `test_T_R5_1`, `_1b`, `_1c`, `_2`, `_3`, `_4`, `_5`, `_6`. **550 passing.**
+
+### The measurement this row exists to produce
+
+Taken with `--no-cache` on 2026-10-01 — 80 validation tickets, 319 s wall, 155 provider requests, no
+replayed response:
+
+| figure | value | target |
+|---|---|---|
+| p95, all tickets | 6,532 ms | — |
+| **p95, automated path (45 answered)** | **5,754 ms** | NFR-01: **< 3 s** |
+| median, all tickets | 4,068 ms | — |
+
+**NFR-01 is missed by 1.9× on the figure the requirement actually names.** A 25-ticket live run measured
+7,744 ms. It is now an entry in the report's gaps list with its cause: two provider round trips per
+answered ticket (PR-01 to draft, PR-03 to judge) against a hosted model. NFR-01 itself asks for the
+measured figure and the cause when it cannot be met, and the PRD revision can now carry it.
+
+### What the review found — four highs, and one of them had already fired
+
+1. **`--no-cache` wrote to the cache, and the first timing run replaced 150 of 365 rows.** `put` is
+   `INSERT OR REPLACE`, and the cache key carries nothing that distinguishes a September recording from
+   today's. The consequence is not academic: replaying the same 80 tickets answers **42** against the
+   September recordings and **43–45** against the new ones, because the model's text decides
+   `no_cited_article`, `invalid_citation` and `ungrounded_draft`. NFR-08 held only as far back as the last
+   timing run, and no artefact recorded that the cache had moved. My code comment had called the
+   write-through a feature — "warms the cache for the next ordinary run" — which is how a hazard gets
+   written down as a convenience. `--no-cache` now writes nothing; verified by checking the cache row count
+   and newest timestamp either side of a live 25-ticket run: **identical**.
+   The September recordings are preserved at `storage/llm_cache.2026-09-28-gate.sqlite` with
+   `storage/CACHE_README.md` explaining both files and how to replay either. **Which run the gate is
+   signed off on is R13's decision, not mine**, and it now has both runs to choose between.
+2. **The p95 cell said "(replay)" on runs where nothing was replayed.** The suffix was driven by
+   `representative`, so a rule-only run and a kill-switch run — zero model calls, zero cache hits — read
+   `0.0 ms (replay)`. That contradicts FR-14 §6 item 44, which R4 had just added, in the one cell an
+   assessor reads; item 44's own test asserted only on the confidence column. There are five latency
+   states now (`measured`, `partly_replayed`, `replay`, `provider_not_reached`, `stub`) and the suffix
+   comes from the state.
+3. **The latency was not the automated path's latency**, while a field named `representative` asserted it
+   was. NFR-01 names the automated path; the harness averaged answered and escalated tickets together.
+   I had guessed this would flatter the figure and said so — **I was wrong about the direction**:
+   escalations are the *slower* group here (p95 6,779 ms against 5,754 ms) because they still make a PR-02
+   handover call, and most make PR-01 and PR-03 first before being blocked. But the reviewer's point stands
+   regardless: a synthetic run with one slow answered ticket among nineteen fast rule escalations reports a
+   p95 that excludes the answered ticket outright. Both figures are reported and `nfr01_figure` names the
+   right one.
+4. **The strict rule and the partly-replayed branch had no test.** Mutating `representative` to drop its
+   `not hits` clause left the whole suite green, and partly-replayed is the *normal* state once anything is
+   cached. T-R5-6 asserts all five states directly.
+
+### Four mediums, all fixed
+
+One boolean was carrying two claims, so a 1%-replayed run was labelled a replay in the headline while its
+own confidence cell said "partly replayed: 1 of 101" — the mirror image of the defect this row exists to
+fix. `technical.latency_ms` reached `metrics.json` with no caveat two keys from the block saying the
+figures were a replay. `run` did not record that reads were off, so the one configuration that cannot
+reproduce itself left no trace in its own artefact and nothing stopped it being handed in as the A5
+evidence. And R5's own third "Do" item — record the NFR-01 miss — was not done: the miss existed only in
+the backlog file, and a live run's gaps list never mentioned NFR-01 at all.
+
+Four lows fixed: `_latency` was computed twice, two lines below the comment forbidding exactly that;
+`and not stub` was a dead clause that read as a guard; a `--limit` run described n=1 as a measurement
+(the note now carries a sample-size clause); and the spec's §2 argument list was a flag short of the code.
+
+`uv run pytest -q` → **550 passed**. `uv run ruff check .` → clean.

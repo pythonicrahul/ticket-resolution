@@ -354,11 +354,17 @@ class ProviderClient:
     """FR-15: the only way the system talks to a model."""
 
     def __init__(self, settings: Settings, transport: Transport | None = None,
-                 clock: Any | None = None) -> None:
+                 clock: Any | None = None, read_cache: bool = True) -> None:
         self._settings = settings
         self._transport = transport if transport is not None else LangChainTransport(settings)
         self._clock = clock or _Clock()
         self._cache = _ResponseCache(settings.llm_cache_path)
+        # R5: a timing run has to reach the provider, or it is not a timing run. False turns
+        # off **both** the reads and the writes: see the comment on `put` below for why warming
+        # the cache from a timing run is a hazard rather than a convenience. This cannot
+        # disable a guardrail or a log write; it changes where a *response* comes from, and
+        # NFR-08's determinism rests on temperature 0 and fixed prompt versions, untouched.
+        self._read_cache = read_cache
         self._state = _BreakerState.CLOSED
         self._opened_at: float | None = None
         self.completions = 0
@@ -454,9 +460,16 @@ class ProviderClient:
 
     # --- internals -----------------------------------------------------------------
 
+    @property
+    def read_cache(self) -> bool:
+        """Whether this client replays recorded responses (R5, `--no-cache`)."""
+        return self._read_cache
+
     def _from_cache(self, key: str, prompt_version: str,
                     started: float) -> ProviderResponse | None:
         """A stored reply, or None. A stored reply this module cannot use is dropped, not served."""
+        if not self._read_cache:
+            return None  # R5: a timing run measures the provider, not the cache
         payload = self._cache.get(key)
         if payload is None:
             return None
@@ -517,7 +530,15 @@ class ProviderClient:
                 continue
 
             self._record_success()
-            if not self._cache.put(key, payload):
+            # R5 review: a timing run must not **write** either. `put` is INSERT OR REPLACE and
+            # the key carries nothing that distinguishes "recorded in September" from
+            # "re-recorded today", so a timing run silently replaced the recorded responses a
+            # later ordinary run replays — and changed its routing, because the model's text
+            # decides `no_cited_article`, `invalid_citation` and `ungrounded_draft`. The first
+            # `--no-cache` run this project made rewrote 150 of 365 rows and moved the answered
+            # count from 42 to 45. NFR-08 holds only as far back as the last timing run, so a
+            # timing run now touches nothing.
+            if self._read_cache and not self._cache.put(key, payload):
                 pass  # counted inside the cache; a ticket is never failed for it
             return self._response(payload, prompt_version, cached=False, attempts=attempts,
                                   started=started, text=text, provider_requests=requests_made)

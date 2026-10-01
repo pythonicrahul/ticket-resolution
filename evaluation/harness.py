@@ -90,6 +90,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="process only the first N tickets (a smoke run; recorded in the report)")
     parser.add_argument("--no-index-rebuild", action="store_true",
                         help="fail rather than build the documentation index")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="do not replay recorded provider responses. For a timing run: "
+                             "NFR-01 is about the automated path, and a run served from the "
+                             "cache measures the cache. Responses are still written.")
     parser.add_argument("--stub-pipeline", action="store_true",
                         help="run ingest and retrieval only, with no model calls. For exercising "
                              "the run machinery; a gate run must not use it.")
@@ -112,6 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             limit=args.limit,
             allow_index_build=not args.no_index_rebuild,
             use_stub=args.stub_pipeline,
+            read_cache=not args.no_cache,
         ).exit_code
     except HarnessError as exc:
         print(f"run failed: {exc}", file=sys.stderr)
@@ -133,7 +138,7 @@ def run(input_path: Path, output_dir: Path, settings: Settings, *,
         pipeline: Pipeline | None = None, docs_path: Path | None = None,
         decision_log_path: Path | None = None, run_id: str | None = None,
         limit: int | None = None, allow_index_build: bool = True,
-        use_stub: bool = False) -> RunReport:
+        use_stub: bool = False, read_cache: bool = True) -> RunReport:
     """FR-14: one unattended run. Returns the report; writes it to `output_dir`."""
     started = time.monotonic()
 
@@ -160,7 +165,8 @@ def run(input_path: Path, output_dir: Path, settings: Settings, *,
     built_here = pipeline is None
     if built_here:
         pipeline = (_build_stub_pipeline(settings, docs_path, allow_index_build) if use_stub
-                    else _build_pipeline(settings, docs_path, allow_index_build))
+                    else _build_pipeline(settings, docs_path, allow_index_build,
+                                         read_cache=read_cache))
 
     log_path = decision_log_path or settings.decision_log_path
     results: list[TicketResult] = []
@@ -188,7 +194,8 @@ def run(input_path: Path, output_dir: Path, settings: Settings, *,
                            # stub directly is still running a stub, and the report has to
                            # describe what ran (A10).
                            stub=use_stub or isinstance(pipeline, StubPipeline),
-                           pipeline_name=type(pipeline).__name__)
+                           pipeline_name=type(pipeline).__name__,
+                           read_cache=read_cache)
         _write_reports(output_dir, metrics, results)
     except Exception as exc:  # noqa: BLE001 - the run happened; losing the report is not allowed
         raise HarnessError(
@@ -297,7 +304,7 @@ def _is_provider_failure(exc: BaseException) -> bool:
 
 
 def _build_pipeline(settings: Settings, docs_path: Path | None,
-                    allow_index_build: bool) -> Pipeline:
+                    allow_index_build: bool, read_cache: bool = True) -> Pipeline:
     """Row 14: the real graph. Every component, or a refusal that names what is missing.
 
     A missing classifier or an unset `MODEL_NAME` stops the run here rather than quietly running
@@ -324,7 +331,7 @@ def _build_pipeline(settings: Settings, docs_path: Path | None,
             f"the classifier at {settings.classifier_path} could not be loaded: {exc}. Train it "
             "with scripts/train_classifier.py, or run with --stub-pipeline.") from None
 
-    client = ProviderClient(settings)
+    client = ProviderClient(settings, read_cache=read_cache)
     return SupportPipeline(
         retriever=retriever, classifier=classifier, router=Router(settings),
         drafter=Drafter(client), guardrails=Guardrails(judge=GroundingJudge(client)),
@@ -363,7 +370,7 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
              settings: Settings, input_path: Path, limit: int | None,
              wall_seconds: float, tickets_in_file: int, log_path: Path,
              run_id: str | None, stub: bool = False,
-             pipeline_name: str = "unknown") -> dict[str, Any]:
+             pipeline_name: str = "unknown", read_cache: bool = True) -> dict[str, Any]:
     """Every figure the Build Specification §04 and the Evaluation Framework require."""
     scored = [r for r in results if r.labels]
     answered = [r for r in results if r.outcome.decision == "auto_respond"]
@@ -376,8 +383,9 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
                or "block" in r.outcome.all_reasons]
     latencies = [r.latency_ms for r in results]
 
-    technical = _technical(results, scored, latencies, answered)
     governance = _governance(results, reconciliation)
+    latency = _latency(latencies, [r.latency_ms for r in answered], governance, stub)
+    technical = _technical(results, scored, latencies, answered)
     segments = _segments(results)
     reasons = _counts(r.outcome.reason or "none" for r in results)
 
@@ -396,6 +404,10 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
             "pipeline": ("stub" if stub else
                          "full" if pipeline_name == "SupportPipeline" else "injected"),
             "pipeline_class": pipeline_name,
+            # R5 review: a `--no-cache` report was indistinguishable from an ordinary run
+            # against a cold cache, so the one configuration that cannot reproduce itself left
+            # no trace in its own artefact. A5 and NFR-08 are judged on a run that can.
+            "read_cache": read_cache,
             "wall_seconds": round(wall_seconds, 2),
             "scored_against_labels": f"{len(scored)} of {len(results)}",
             "thresholds": {
@@ -410,6 +422,7 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
             "escalated": len(escalated),
             "blocked_by_guardrails": len(blocked),
         },
+        "latency": latency,
         "business": _business(results, answered, escalated, latencies),
         # Computed once above, not twice: the results table reads the same dicts the sections
         # print, so the two cannot drift — which is the defect R4 exists to fix.
@@ -423,9 +436,107 @@ def _metrics(results: list[TicketResult], tickets: list[Ticket], reconciliation:
         "unknown_channel_tickets": sum(1 for r in results if r.ticket.channel == "unknown"),
         "results_table": _results_table(results, answered, escalated, latencies, scored,
                                          technical, governance, segments, stub,
-                                         settings.kill_switch_on, reasons),
-        "gaps": _gaps(results, answered, scored, technical, stub),
+                                         settings.kill_switch_on, reasons, latency),
+        "gaps": _gaps(results, answered, scored, technical, latency, stub),
     }
+
+
+def _latency(latencies: list[float], answered_latencies: list[float],
+             governance: dict[str, Any], stub: bool) -> dict[str, Any]:
+    """NFR-01, R5: the measured figures, and whether they measured anything.
+
+    `gate-openai-2` reported p95 **95.7 ms** against NFR-01's 3-second target, off **0 model
+    calls and 162 cache hits**. The live run of the same 80 tickets measured median 4.4 s and
+    p95 **6.5 s**, which misses it. A number that fast beside that target does not read as a
+    replay unless the report says so, so a comfortable pass was being printed over a real miss.
+
+    **Three states, not a boolean** (R5 review). `representative` is strict — any replayed
+    response makes the figure smaller than the system's real latency — but reusing it to print
+    the word *replay* mislabelled two different runs: a 1%-replayed run became a "replay" in
+    the headline while its own note said "partly replayed: 1 of 101", and a run that never
+    reached the provider at all (every ticket escalating by rule, or the kill switch on) was
+    marked a cache replay that never happened, contradicting FR-14 §6 item 44.
+
+    **`answered` as well as `all`** (R5 review). NFR-01 is "p95 end-to-end time per ticket **on
+    the automated path**", and a figure over every ticket is not that figure: on the real run
+    the two differ (p95 6,532 ms over all, 5,754 ms over the answered), and a run with cheap
+    rule escalations could hide a miss behind them. Both are reported, and the one NFR-01 asks
+    about is named.
+    """
+    calls = governance.get("model_calls", 0)
+    hits = governance.get("cache_hits", 0)
+    responses = calls + hits
+    return {
+        "median_ms": _round(statistics.median(latencies)) if latencies else None,
+        "p95_ms": _round(_percentile(latencies, 0.95)) if latencies else None,
+        # The automated path only: what NFR-01 is actually about.
+        "automated_path_median_ms": (_round(statistics.median(answered_latencies))
+                                     if answered_latencies else None),
+        "automated_path_p95_ms": (_round(_percentile(answered_latencies, 0.95))
+                                  if answered_latencies else None),
+        "automated_path_tickets": len(answered_latencies),
+        "nfr01_figure": "automated_path_p95_ms",
+        "model_calls": calls,
+        "cache_hits": hits,
+        "provider_responses_from_cache_pct": _pct(hits, responses) if responses else None,
+        "state": _latency_state(calls, hits, stub),
+        "cache_replay": bool(hits) and not calls,
+        # `and not stub` would be dead here: a stub run makes no model call, so `bool(calls)`
+        # already decides it. The state carries the stub case.
+        "representative": bool(calls) and not hits,
+        "note": _latency_note(calls, hits, stub, len(answered_latencies)),
+    }
+
+
+#: What the latency figures of a run are. `measured` is the only one NFR-01 can be judged on.
+_LATENCY_STATES = ("measured", "partly_replayed", "replay", "provider_not_reached", "stub")
+
+
+def _latency_state(calls: int, hits: int, stub: bool) -> str:
+    """One of `_LATENCY_STATES`. Three of the five used to collapse into "replay"."""
+    if stub:
+        return "stub"
+    if hits and not calls:
+        return "replay"
+    if hits:
+        return "partly_replayed"
+    if calls:
+        return "measured"
+    return "provider_not_reached"
+
+
+#: The suffix the results table puts on the p95 cell, by state. `measured` gets none: a bare
+#: number is a claim, and only a measured run is entitled to make it.
+_LATENCY_SUFFIX = {
+    "replay": " (replay)",
+    "partly_replayed": " (partly replayed)",
+    "provider_not_reached": " (provider not reached)",
+    "stub": " (stub run)",
+}
+
+
+def _latency_note(calls: int, hits: int, stub: bool, answered: int) -> str:
+    """One sentence saying what the latency figures are, in this run's own terms."""
+    state = _latency_state(calls, hits, stub)
+    sample = ("" if answered >= 20 else
+              f" The automated path figure rests on {answered} ticket(s), too few to read as a "
+              f"percentile." if answered else
+              " No ticket took the automated path, so NFR-01's own figure is absent.")
+    if state == "stub":
+        return ("a stub run makes no model call, so this is the machinery's time and not the "
+                "system's")
+    if state == "replay":
+        return (f"**cache replay**: all {hits} provider responses came from the cache, so these "
+                f"figures are replay times and not measurements of the automated path "
+                f"(NFR-01).{sample}")
+    if state == "partly_replayed":
+        return (f"**partly replayed**: {hits} of {calls + hits} provider responses came from "
+                f"the cache, so these figures are faster than the automated path really is "
+                f"(NFR-01).{sample}")
+    if state == "measured":
+        return (f"measured over {calls} provider request(s), with no replayed response.{sample}")
+    return ("the provider was never reached in this run: no model call and no cache hit, so "
+            "this is the time taken by ingest, retrieval and the rules alone")
 
 
 def _business(results: list[TicketResult], answered: list[TicketResult],
@@ -670,7 +781,7 @@ def _results_table(results: list[TicketResult], answered: list[TicketResult],
                    scored: list[TicketResult], technical: dict[str, Any],
                    governance: dict[str, Any], segments: dict[str, Any],
                    stub: bool, kill_switch: bool,
-                   reasons: dict[str, int]) -> list[dict[str, Any]]:
+                   reasons: dict[str, int], latency: dict[str, Any]) -> list[dict[str, Any]]:
     """The Evaluation Framework's own table: measure, baseline, target, achieved, confidence.
 
     R4: every cell that can be computed from the run now is. This table printed
@@ -698,7 +809,15 @@ def _results_table(results: list[TicketResult], answered: list[TicketResult],
     achieved = {
         "First contact resolution (proxy)": _fmt(_pct(len(answered), len(results))),
         "Escalation rate": _fmt(_pct(len(escalated), len(results))),
-        "Processing time p95": (f"{_round(_percentile(latencies, 0.95))} ms" if latencies else "—"),
+        # R5: marked, not just footnoted. 95.7 ms beside a "<3 s" target reads as a pass, and
+        # the live run of the same tickets measured 6.7 s, which is a miss.
+        # R5 review: state-driven. The boolean printed "(replay)" on a run that never
+        # reached the provider and on a 1%-replayed one, which is the same false claim R4 was
+        # commissioned to remove, in the one cell an assessor reads.
+        "Processing time p95": (
+            "—" if not latencies else
+            f"{_round(_percentile(latencies, 0.95))} ms"
+            + _LATENCY_SUFFIX.get(latency["state"], "")),
         # NFR-03 asks for ≥85% **per class**, so the cell is the worst class, not the average.
         # 100% over twenty classes and 40% over one meets no requirement, and averages to 97%.
         "Intent precision (per class)": (f"{precision}%" if precision is not None
@@ -716,7 +835,7 @@ def _results_table(results: list[TicketResult], answered: list[TicketResult],
         "First contact resolution (proxy)": (
             f"proxy: automated handling, not confirmed resolution; n={len(results)}"),
         "Escalation rate": _escalation_confidence(results, answered, stub, kill_switch, reasons),
-        "Processing time p95": _latency_confidence(results, governance, stub),
+        "Processing time p95": latency["note"],
         "Intent precision (per class)": _precision_confidence(precision, predicted, scored,
                                                               results, calibration),
         "Retrieval hit rate": (
@@ -846,25 +965,9 @@ _NOT_A_TUNING_RESULT = frozenset({
 })
 
 
-def _latency_confidence(results: list[TicketResult], governance: dict[str, Any],
-                        stub: bool) -> str:
-    """NFR-01 is about the automated path, and a run with no model call is not that path."""
-    calls = governance.get("model_calls", 0)
-    hits = governance.get("cache_hits", 0)
-    if stub:
-        return "a stub run makes no model call, so this is the machinery's time, not the system's"
-    if not calls and hits:
-        return (f"no model call was made in this run — all {hits} provider responses came from "
-                f"the cache — so this is a replay time, not a measured one")
-    if not calls and results:
-        # R4 review: the cache sentence was printed here too, where it is flatly false.
-        return ("the provider was never reached in this run: no model call and no cache hit, so "
-                "this is the time taken by ingest, retrieval and the rules alone")
-    return f"{calls} model call(s) over {len(results)} tickets"
-
-
 def _gaps(results: list[TicketResult], answered: list[TicketResult],
-          scored: list[TicketResult], technical: dict[str, Any], stub: bool) -> list[str]:
+          scored: list[TicketResult], technical: dict[str, Any],
+          latency: dict[str, Any], stub: bool) -> list[str]:
     """FR-14 §4: a figure this run could not produce says so, **and says why**.
 
     R4: every entry used to be a constant naming a build row — "no classifier yet (row 8)",
@@ -899,6 +1002,21 @@ def _gaps(results: list[TicketResult], answered: list[TicketResult],
             "Every ticket escalated in this run, so first contact resolution, the private-data "
             "count and the citation figures have no sent replies behind them. The reasons "
             "table says what stopped each one.")
+    # R5 review: the one requirement this project has measured and **missed** was the one
+    # figure the gaps list said nothing about.
+    if latency["state"] in {"replay", "partly_replayed", "provider_not_reached", "stub"}:
+        gaps.append(
+            f"Latency against NFR-01 (p95 under 3 s on the automated path): not measured in "
+            f"this run. {latency['note']}")
+    elif latency["automated_path_p95_ms"] is not None and latency["automated_path_p95_ms"] > 3000:
+        gaps.append(
+            f"**NFR-01 is missed.** The automated path's p95 is "
+            f"{latency['automated_path_p95_ms']} ms against a 3,000 ms target, over "
+            f"{latency['automated_path_tickets']} answered ticket(s). Two provider round trips "
+            f"per answered ticket (PR-01 to draft, PR-03 to judge) against a hosted model is "
+            f"the cause; NFR-01 was written before the provider was chosen, and the "
+            f"requirement itself asks for the measured figure and its cause when it cannot be "
+            f"met.")
     gaps.extend([
         ("Hallucination rate and citation accuracy: need human review of at least 50 responses "
          "by two assessors (Evaluation Framework tier two); the harness reports unresolvable "
@@ -1061,6 +1179,8 @@ def _markdown(metrics: dict[str, Any]) -> str:
         # hundred lines down, and a full run made no positive statement at all. A10's reader
         # looks at the header, so the header says which pipeline produced these figures.
         (f"- Pipeline: **{run['pipeline']}** (`{run['pipeline_class']}`)"
+         + ("" if run.get("read_cache", True) else
+            ", **--no-cache**: recorded responses neither read nor written")
          + ("  \n  *A stub run is ingest and retrieval only: no classifier, no drafting and no "
             "guardrails, so every ticket escalates by the stub's own contract.*"
             if run["pipeline"] == "stub" else
@@ -1071,6 +1191,12 @@ def _markdown(metrics: dict[str, Any]) -> str:
          f"top_k {run['thresholds']['retrieval_top_k']}  "),
         f"- Wall time: {run['wall_seconds']} s  ",
     ]
+    # R5: above the figures it is about. `gate-openai-2` printed p95 95.7 ms against NFR-01's
+    # 3-second target off zero model calls, while the live run of the same 80 tickets measured
+    # 6.7 s — a miss. A caveat in a footnote does not stop that reading.
+    latency = metrics["latency"]
+    if latency["state"] in {"replay", "partly_replayed"} and latency["p95_ms"] is not None:
+        lines += ["", f"> **Latency is not a measurement in this run.** {latency['note']}", ""]
     if run["limit"] is not None:
         lines.append(f"- **PARTIAL RUN: --limit {run['limit']} was used. Not a full-set result.**  ")
     lines += [

@@ -1305,3 +1305,74 @@ was wrong in the first attempt and each of which produced a *confidently false* 
   `classify.TrainingReport.worst_calibration_gap_points` already worked. Taking the max over every band
   let one stray prediction in an otherwise empty band decide an NFR-03 verdict — and gave this repo two
   artefacts reporting "worst calibration gap" against the same 5 points by different rules.
+
+## D-68 · A replay is not a measurement, and NFR-01 is missed (FR-14, NFR-01)
+
+`gate-openai-2`'s report printed **p95 95.7 ms** against NFR-01's `< 3 s` target, off **0 model calls and
+162 cache hits**. The live run of the same 80 tickets had measured median 4.4 s and p95 **6.7 s**. So the
+report was showing a comfortable pass over a miss of more than a factor of two, and nothing in it said the
+figure was a replay.
+
+Two changes, and one measurement.
+
+**The report marks it.** A new `latency` block carries the median and p95 together with `model_calls`,
+`cache_hits`, `provider_responses_from_cache_pct`, `cache_replay` and `representative`. When the figures
+are not representative the markdown carries a blockquote **above `## Volume`** — not a footnote, because a
+footnote does not stop someone reading 95 ms against "<3 s" as a pass — and the results-table cell reads
+`94.5 ms (replay)`.
+
+`representative` is the strict reading: `model_calls > 0 and cache_hits == 0`. *Any* replayed response
+makes the figure smaller than the system's real latency, so a single cache hit forfeits the claim, and
+`provider_responses_from_cache_pct` carries the degree. "Partly replayed" and "wholly replayed" are
+different claims and the note distinguishes them.
+
+**`--no-cache` for timing runs.** `ProviderClient(read_cache=False)` neither reads nor writes recorded
+responses. This is not the kind of switch CLAUDE.md forbids: it cannot reach a guardrail, a routing
+decision or a log write, and NFR-08's determinism rests on temperature 0 and fixed prompt versions, both
+untouched — the cache makes a rerun cheap, it is not what makes it deterministic. A run made with the flag
+cannot reproduce itself, so it is not the run to show for A5 or NFR-08, and `run.read_cache` records that
+reads were off so a report cannot be mistaken for one that can.
+
+**It skipped only the reads at first, and that was a defect — one that had already fired.** `put` is
+`INSERT OR REPLACE` and the key carries nothing to distinguish a September recording from today's, so the
+first timing run this project made **replaced 150 of 365 cache rows**. The consequence is not academic:
+replaying the same 80 validation tickets answers **42** against the September recordings and **43–45**
+against the new ones, because the model's text decides `no_cited_article`, `invalid_citation` and
+`ungrounded_draft`. NFR-08 held only as far back as the last timing run, and nothing in any artefact
+recorded that the cache had moved. The comment in the code had called the write-through a feature — "warms
+the cache for the next ordinary run" — which is exactly how a hazard gets written down as a convenience.
+
+The September recordings are preserved at `storage/llm_cache.2026-09-28-gate.sqlite` with
+`storage/CACHE_README.md` explaining both files and how to replay either, because the gate sign-off in
+D-57 and the figures in `evaluation/results/gate-openai-2/` were replayed from them. **Which run the gate
+is signed off on is the R13 checkpoint's decision, not mine.**
+
+**The measurement, taken with the flag (80 validation tickets, 2026-10-01, 319 s wall, 155 provider
+requests, no replayed response):**
+
+| figure | value | target |
+|---|---|---|
+| Processing time, median | **4,068 ms** | — |
+| Processing time, p95 | **6,532 ms** | NFR-01: **< 3 s** |
+
+**NFR-01 is missed by a factor of 2.2 on p95.** That is now in the report as an achieved value with no
+caveat to soften it, which is the point of this row. The cause is not the system: two provider round trips
+per answered ticket (PR-01 to draft, PR-03 to judge) against a hosted model, and NFR-01 was written before
+the provider was chosen. NFR-01 itself says "if a free-tier model cannot meet it, the measured figure is
+reported with the cause" — the same applies to a paid one, and the figure is reported.
+
+**A second finding, unasked for, from running it.** The live run answered **45 of 80**; the September
+replay of the same tickets answers **42**, and the reason mix differs (`ungrounded_draft` 10 live against
+16 cached, plus a `malformed_draft` the September cache has never seen). So the cache is not merely faster
+than a live run — it is a *different run*, and three answered tickets separate them. Any figure quoted
+from a replay is a figure about the day the responses were recorded.
+
+**And the figure reported against NFR-01 was not NFR-01's figure.** The requirement is "p95 end-to-end
+time per ticket **on the automated path**", and the harness computed its p95 over every ticket. On the
+real run the two differ — 6,532 ms over all 80, **5,754 ms over the 45 answered** — and on a run with
+cheap rule escalations the difference can hide a miss entirely: a synthetic case with one slow answered
+ticket among nineteen fast escalations reports a p95 that excludes the answered ticket outright. Both
+figures are now in the report and `latency.nfr01_figure` names the one the requirement asks about. The
+automated path misses NFR-01 by 1.9×; a 25-ticket live timing run measured **7,744 ms**. Either way the
+miss is now a named entry in the gaps list, which is where the one requirement this project has measured
+and failed belonged all along.

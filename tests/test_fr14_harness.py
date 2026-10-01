@@ -593,7 +593,7 @@ def test_T_FR14_27_guardrail_blocks_are_counted_even_though_the_ticket_escalates
 # --- R3: the text that was sent, and the note that went with it ------------------------
 
 
-def real_pipeline(tmp_path, answers=True, handover_parses=True):
+def real_pipeline(tmp_path, answers=True, handover_parses=True, read_cache=True):
     """The real graph over fake edges, so `reply` and `handover` are genuinely produced.
 
     A `FakePipeline` returning a hand-built `Outcome` would assert that the harness copies a
@@ -650,7 +650,7 @@ def real_pipeline(tmp_path, answers=True, handover_parses=True):
     body = draft if answers else (note if handover_parses else json.dumps({"not": "a note"}))
     transport = FakeTransport([{"choices": [{"message": {"content": body}}],
                                 "model": "test-model", "system_fingerprint": "fp"}] * 400)
-    client = ProviderClient(config, transport=transport)
+    client = ProviderClient(config, transport=transport, read_cache=read_cache)
     return SupportPipeline(retriever=retriever, classifier=Fixed(), router=Router(config),
                            drafter=Drafter(client), guardrails=Guardrails(judge=Judge()),
                            handover_writer=HandoverWriter(client), settings=config)
@@ -1234,3 +1234,260 @@ def test_T_R4_13_the_private_data_row_counts_what_was_sent_not_what_was_blocked(
         "nothing was sent carrying private data, whatever the guardrails detected")
     if metrics["governance"]["private_data_detections"]:
         assert "blocked" in cell["confidence"] and "FR-12" in cell["confidence"]
+
+
+# --- R5: a replay is not a measurement --------------------------------------------------
+
+
+def test_T_R5_1_a_run_served_from_the_cache_is_labelled_a_replay(tmp_path):
+    """R5 (FR-14, NFR-01): `gate-openai-2` reported p95 95.7 ms off 0 model calls.
+
+    The live run of the same 80 tickets measured median 4.4 s and p95 6.7 s, which **misses**
+    NFR-01's 3-second target. A report that prints 95.7 ms against "<3 s" without saying it is
+    a replay turns a missed requirement into a comfortable pass.
+
+    One ticket, so the live leg makes exactly one call with nothing to replay. It runs with the
+    **default** `read_cache=True`, not with `--no-cache`: the R5 review pointed out that using
+    the flag to manufacture the live premise makes the test partly circular, and an ordinary
+    cold-cache run is the case a reader actually cares about.
+    """
+    source = answerable_file(tmp_path, count=1)
+
+    first = harness(tmp_path / "live", real_pipeline(tmp_path), input_path=source)
+    assert first.metrics["governance"]["model_calls"] > 0, "the first run really calls out"
+    assert first.metrics["governance"]["cache_hits"] == 0, "a cold cache has nothing to replay"
+    latency = first.metrics["latency"]
+    assert latency["cache_replay"] is False
+    assert latency["representative"] is True
+    assert "no replayed response" in latency["note"]
+    first_cell = {row["measure"]: row for row in first.metrics["results_table"]}[
+        "Processing time p95"]
+    assert "(replay)" not in first_cell["achieved"]
+    assert "not a measurement" not in (
+        tmp_path / "live" / "out" / "metrics.md").read_text(encoding="utf-8")
+
+    # The same ticket again, against the cache the first run warmed.
+    second = harness(tmp_path / "replay", real_pipeline(tmp_path), input_path=source)
+    latency = second.metrics["latency"]
+    assert second.metrics["governance"]["model_calls"] == 0
+    assert second.metrics["governance"]["cache_hits"] > 0
+    assert latency["cache_replay"] is True
+    assert latency["representative"] is False
+    assert latency["provider_responses_from_cache_pct"] == 100.0
+
+    markdown = (tmp_path / "replay" / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "cache replay" in markdown.lower()
+    assert markdown.index("replay") < markdown.index("## Volume"), (
+        "the notice has to be above the figures it is about, not in a footnote")
+
+    cell = {row["measure"]: row for row in second.metrics["results_table"]}[
+        "Processing time p95"]
+    assert cell["achieved"].endswith("(replay)"), cell
+    assert "not measurements of the automated path" in cell["confidence"]
+    assert "NFR-01" in cell["confidence"]
+
+
+def test_T_R5_1b_a_partly_replayed_run_is_neither_a_measurement_nor_a_replay(tmp_path):
+    """R5 review (high): the normal state once anything is cached, and it had no test.
+
+    Mutating `representative` to drop its `not hits` clause left the whole suite green, so a
+    future edit could restore the original defect for an 83%-replayed run with no marker and no
+    notice. And one boolean was carrying two claims: a run with 100 live calls and 1 cache hit
+    was labelled a **replay** in the headline while its own confidence cell said "partly
+    replayed: 1 of 101".
+    """
+    source = answerable_file(tmp_path, count=4)   # identical tickets: 1 call, 3 replays
+    report = harness(tmp_path, real_pipeline(tmp_path), input_path=source)
+    governance, latency = report.metrics["governance"], report.metrics["latency"]
+
+    assert governance["model_calls"] > 0 and governance["cache_hits"] > 0, "the premise"
+    assert latency["representative"] is False, "any replayed response forfeits the claim"
+    assert latency["cache_replay"] is False, "but this was not a replay: the provider was called"
+    assert 0 < latency["provider_responses_from_cache_pct"] < 100
+    assert "partly replayed" in latency["note"]
+
+    cell = {row["measure"]: row for row in report.metrics["results_table"]}[
+        "Processing time p95"]
+    assert "(replay)" not in cell["achieved"], (
+        "a partly replayed run is not a replay, and the headline must not say it is")
+    assert "partly replayed" in cell["achieved"], cell
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "partly replayed" in markdown
+    assert "cache replay" not in markdown.lower()
+
+
+def test_T_R5_1c_a_run_that_never_reached_the_provider_is_not_marked_a_replay(tmp_path):
+    """R5 review (high): the suffix was driven by `representative`, not by a replay.
+
+    A run where every ticket escalates by rule makes no model call and no cache hit, and the
+    results-table cell read `0.0 ms (replay)` — contradicting FR-14 §6 item 44 (`T-R4-11`) in
+    the one cell an assessor reads. `T-R4-11` asserted only on the confidence column.
+    """
+    report = harness(tmp_path, FakePipeline(
+        decide=lambda t: ("escalate", "must_escalate_intent")))
+    latency = report.metrics["latency"]
+    assert latency["model_calls"] == 0 and latency["cache_hits"] == 0, "the premise"
+    assert latency["cache_replay"] is False
+
+    cell = {row["measure"]: row for row in report.metrics["results_table"]}[
+        "Processing time p95"]
+    assert "replay" not in cell["achieved"], cell
+    assert "the provider was never reached" in cell["confidence"]
+    markdown = (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
+    assert "cache replay" not in markdown.lower()
+
+
+def test_T_R5_2_no_cache_makes_zero_cache_reads(tmp_path):
+    """R5: a timing run has to reach the provider, or it is not a timing run."""
+    from ticketing_agent.provider import FakeTransport, ProviderClient
+
+    config = settings(tmp_path)
+    payload = {"choices": [{"message": {"content": "{}"}}], "model": "test-model",
+               "system_fingerprint": "fp"}
+    warm = ProviderClient(config, transport=FakeTransport([payload] * 4))
+    args = {"prompt_id": "PR-01", "prompt_version": "v1.0"}
+    warm.complete([{"role": "user", "content": "hello"}], **args)
+    assert warm.cache_hits == 0 and warm.provider_requests == 1
+
+    cached = ProviderClient(config, transport=FakeTransport([payload] * 4))
+    cached.complete([{"role": "user", "content": "hello"}], **args)
+    assert cached.cache_hits == 1, "the cache is warm, so this is the baseline"
+
+    timing = ProviderClient(config, transport=FakeTransport([payload] * 4), read_cache=False)
+    timing.complete([{"role": "user", "content": "hello"}], **args)
+    assert timing.cache_hits == 0, "--no-cache must not read"
+    assert timing.provider_requests == 1, "and must actually reach the provider"
+
+    # And it does not **write** either. R5 review: `put` is INSERT OR REPLACE and the key
+    # carries nothing that distinguishes a September recording from today's, so a timing run
+    # silently replaced the responses a later ordinary run replays — and moved its routing,
+    # because the model's text decides `no_cited_article` and `ungrounded_draft`. The first
+    # such run this project made rewrote 150 of 365 rows.
+    fresh_key = [{"role": "user", "content": "a question never asked before"}]
+    timing.complete(fresh_key, **args)
+    after = ProviderClient(config, transport=FakeTransport([payload] * 4))
+    after.complete(fresh_key, **args)
+    assert after.cache_hits == 0, "a timing run must leave the cache exactly as it found it"
+    assert after.provider_requests == 1
+
+
+def test_T_R5_3_the_cli_carries_no_cache_through_to_the_client(tmp_path, monkeypatch):
+    """A documented flag that does not reach the thing it names is worse than no flag."""
+    import evaluation.harness as module
+
+    seen = {}
+
+    def fake_build(settings_arg, docs, allow, read_cache=True):
+        seen["read_cache"] = read_cache
+        return FakePipeline()
+
+    monkeypatch.setattr(module, "_build_pipeline", fake_build)
+    monkeypatch.setattr(module, "load_settings", lambda: settings(tmp_path))
+
+    module.main(["--input", str(VALIDATION), "--output", str(tmp_path / "a"), "--limit", "2"])
+    assert seen["read_cache"] is True
+
+    module.main(["--input", str(VALIDATION), "--output", str(tmp_path / "b"), "--limit", "2",
+                 "--no-cache"])
+    assert seen["read_cache"] is False
+
+
+def test_T_R5_4_the_report_says_whether_reads_were_off(tmp_path, monkeypatch):
+    """R5 review (medium): a `--no-cache` report was indistinguishable from a cold-cache one.
+
+    So the one configuration that cannot reproduce itself left no trace in its own artefact,
+    and nothing stopped it being handed in as the A5 / NFR-08 determinism evidence.
+    """
+    import evaluation.harness as module
+
+    monkeypatch.setattr(module, "_build_pipeline",
+                        lambda s, d, a, read_cache=True: FakePipeline())
+    monkeypatch.setattr(module, "load_settings", lambda: settings(tmp_path))
+
+    module.main(["--input", str(VALIDATION), "--output", str(tmp_path / "on"), "--limit", "2"])
+    module.main(["--input", str(VALIDATION), "--output", str(tmp_path / "off"), "--limit", "2",
+                 "--no-cache"])
+
+    on = json.loads((tmp_path / "on" / "metrics.json").read_text(encoding="utf-8"))
+    off = json.loads((tmp_path / "off" / "metrics.json").read_text(encoding="utf-8"))
+    assert on["run"]["read_cache"] is True
+    assert off["run"]["read_cache"] is False
+    assert "--no-cache" in (tmp_path / "off" / "metrics.md").read_text(encoding="utf-8")
+    assert "--no-cache" not in (tmp_path / "on" / "metrics.md").read_text(encoding="utf-8")
+
+
+def test_T_R5_5_nfr01_is_judged_on_the_automated_path_and_the_miss_is_a_gap(tmp_path):
+    """R5 review (high + medium): NFR-01 names the automated path, and a miss is a gap.
+
+    `latencies` is every ticket, so the figure reported against NFR-01 was not NFR-01's figure.
+    On the real run the two differ (p95 6,532 ms over all, 5,754 ms over the answered), and a
+    run with cheap rule escalations could hide a miss behind them. And the one requirement this
+    project has measured and **missed** was the one figure the gaps list said nothing about.
+    """
+    slow = {"ANS-000"}
+
+    class Mixed:
+        """One slow answered ticket among fast rule escalations."""
+
+        def __init__(self):
+            self.seen = []
+
+        def process(self, ticket):
+            import time
+            self.seen.append(ticket.ticket_id)
+            if ticket.ticket_id in slow:
+                time.sleep(0.05)
+                return Outcome(ticket=ticket, decision="auto_respond",
+                               explanation="Answered.", threshold_applied=0.85,
+                               draft="Hi.", citations=("DOC-BILL-002#2",),
+                               # FR-13 refuses a row with model calls and no prompt version,
+                               # and the harness turns that into a pipeline_error escalation —
+                               # which would quietly give this test zero answered tickets.
+                               model_calls=2, prompt_version="PR-01 v1.0",
+                               requirement_ids=("FR-14",))
+            return Outcome(ticket=ticket, decision="escalate",
+                           reason="must_escalate_intent", explanation="To a person.",
+                           all_reasons=("must_escalate_intent",), summary="s", uncertainty="u",
+                           requirement_ids=("FR-14",))
+
+    # Twenty tickets, one of them answered: the p95 over all twenty lands on a fast rule
+    # escalation and the slow answered ticket drops out of the figure entirely. With six it
+    # happens to be the maximum of both, which is why the first version of this test passed
+    # against a p95 that was not NFR-01's.
+    report = harness(tmp_path, Mixed(), input_path=answerable_file(tmp_path, count=20))
+    latency = report.metrics["latency"]
+
+    assert latency["automated_path_tickets"] == 1
+    assert latency["automated_path_p95_ms"] > latency["p95_ms"], (
+        "the slow answered ticket is hidden behind five fast rule escalations")
+    assert latency["nfr01_figure"] == "automated_path_p95_ms"
+    assert "too few to read as a percentile" in latency["note"], (
+        "one ticket is not a p95, and the note has to say so")
+
+
+def test_T_R5_6_the_strict_representative_rule_has_a_test_of_its_own(tmp_path):
+    """R5 review (high): mutating away `and not hits` left the whole suite green.
+
+    `representative` is the strict reading — any replayed response makes the figure smaller
+    than the system's real latency — and nothing asserted the strictness. A future edit
+    dropping the clause would restore the original defect for an 83%-replayed run, with no
+    marker and no header notice, and the suite would not notice.
+    """
+    from evaluation.harness import _latency, _latency_state
+
+    def block(calls, hits, stub=False):
+        return _latency([10.0, 20.0], [10.0], {"model_calls": calls, "cache_hits": hits}, stub)
+
+    assert block(5, 0)["representative"] is True
+    assert block(5, 1)["representative"] is False, (
+        "one replayed response in a hundred still makes the figure faster than the truth")
+    assert block(0, 5)["representative"] is False
+    assert block(0, 0)["representative"] is False
+    assert block(0, 0, stub=True)["representative"] is False
+
+    assert _latency_state(5, 0, False) == "measured"
+    assert _latency_state(5, 1, False) == "partly_replayed"
+    assert _latency_state(0, 5, False) == "replay"
+    assert _latency_state(0, 0, False) == "provider_not_reached"
+    assert _latency_state(0, 0, True) == "stub"
+    assert _latency_state(5, 1, True) == "stub", "a stub run is a stub run whatever it counted"
