@@ -38,6 +38,10 @@ def settings(tmp_path, **overrides):
               "docs_path": DOCS, "chroma_path": tmp_path / "chroma",
               "decision_log_path": tmp_path / "decisions.db",
               "kill_switch_file": tmp_path / "absent",
+              # D-64: without this the provider cache defaults to the real
+              # ./storage/llm_cache.sqlite, so a test both replays from and writes into the
+              # cache a gate run replays from.
+              "llm_cache_path": tmp_path / "llm_cache.sqlite",
               "confidence_threshold": 0.85, "relevance_threshold": 0.0}
     values.update(overrides)
     return Settings(**values)

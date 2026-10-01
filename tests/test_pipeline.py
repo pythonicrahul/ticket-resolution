@@ -698,3 +698,35 @@ def test_T_R2_9_a_classifier_without_row_fields_does_not_lose_the_answer(tmp_pat
 
     assert outcome.decision == "auto_respond", outcome.reason
     assert outcome.urgency is None, "nothing is invented for a classifier that has no urgency"
+
+
+def test_T_R3_7_a_usable_draft_with_no_guardrail_report_is_not_answered(tmp_path):
+    """R3 review (medium): `answered` is now the only gate on persisting the outbound text.
+
+    `_after_check` has always read a missing report as blocked (`blocked = report is None or
+    not report.passed`); `_terminal_reason` read it as a pass. The combination is unreachable
+    today — `_node_check` returns a report or a failure — but if a future early return made it
+    reachable, the result would be an `auto_respond` with `guardrail_results: []`, a reply
+    written to the decision log and to `outcomes.jsonl`, and no guardrail having run on it.
+    """
+    from ticketing_agent.pipeline import PipelineState, _terminal_reason
+
+    pipeline, _ = build(tmp_path, script=answering_script())
+    tkt = ticket()
+    classification = FakeClassifier().classify(tkt)
+    decision = pipeline._router.decide(tkt, classification, PASSAGES, extra_reasons=())
+    draft = pipeline._drafter.draft(tkt, PASSAGES)
+    assert draft.usable and not decision.escalated, "the preconditions this test needs"
+
+    state = PipelineState(ticket=tkt, classification=classification, passages=PASSAGES,
+                          decision=decision, draft=draft, report=None)
+
+    answered, reason, _detail, _all_reasons, stage = _terminal_reason(state)
+    assert answered is False, "a check that did not run is not a pass (FR-12 §3.3)"
+    assert reason == "guardrails_did_not_run"
+    assert stage == "validation"
+
+    outcome = pipeline._outcome(state)
+    assert outcome.decision == "escalate"
+    assert outcome.draft is None, "and nothing is persisted as sent"
+    assert outcome.to_entry().reply_text is None

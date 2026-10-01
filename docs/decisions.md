@@ -1155,3 +1155,87 @@ databases in `storage/` would have failed on the unknown column — and under D-
 the run. `_migrate` is additive and idempotent: `ALTER TABLE ... ADD COLUMN` for anything missing, nothing
 rewritten, nothing dropped, an old run's rows reading NULL, which is the truth about them. Verified against
 all three real databases: 162, 5 and 20 rows preserved.
+
+## D-63 · The run output carries the text that was sent, and the log carries it too (FR-14, FR-13, NFR-03)
+
+`outcomes.jsonl` carried the decision, the citations, the latency and the segments — and **not one word
+of what went to the customer**. Three things follow from that, and the first is the one that matters:
+
+* NFR-03's hallucination rate and citation accuracy are measured, by the Evaluation Framework's own
+  definition, by **human review of at least 50 responses by two assessors with an agreement rate**. The
+  harness counts unresolvable citations and says in the report that this is a floor, not the measure.
+  Without the text, the measure could not be taken at all — not "was not taken yet", *could not be*.
+* A demonstration could not show what the system sends.
+* A complaint could not be reconstructed.
+
+So: `reply` and `cited_passages` (with their text, not only their ids) on every answered line; `handover`
+(summary, system uncertainty, customer goal, already tried, suggested first check) on every escalated one;
+`intent`, `intent_confidence` and `urgency` on both. And a `reply_text` column on the terminal
+`auto_respond` row of the decision log, **schema 2 → 3**, so the record does not depend on a run directory
+surviving.
+
+**`reply_text` is null on every escalation, including one whose draft was written and then withheld.** A
+withheld draft is not a sent reply, and a column that held it would let an auditor conclude a customer
+received something they did not. It is scrubbed and truncated like the other free-text columns: the text
+has already passed guardrail 1 by the time it reaches a terminal row, so a redaction here should be
+impossible — which is exactly why it is worth recording if one ever happens. The log's column is capped at
+`MAX_TEXT_FIELD` (4000) and `outcomes.jsonl` is not, so for an unusually long reply the run output holds
+the full text and the log holds a marked truncation. The run output is the artefact for review; the log is
+the artefact for audit, and it says when it cut something.
+
+**The review found that the handover fields went to disk raw, and that the test which forbids exactly that
+could not see it.** On the template path `customer_goal` is literally the first sentence of the ticket body
+(`handover.py`), and `already_tried` is extracted from it by PR-02. `_safe` substitutes only when
+`secrets_in` fires, which covers national ids, card numbers and credentials — not an email address. A
+ticket reading "Please write back to dana.okonkwo@…" put that address straight into a file.
+`test_T_FR14_18_no_customer_text_reaches_the_report_or_the_log` asserted on `outcomes.jsonl` and passed
+throughout, because it runs a `FakePipeline` that produces no handover and no reply at all.
+
+The handover is customer-derived **by requirement** — FR-01 asks for what the customer is trying to
+achieve — so the fix is not to strip it. `outcomes.jsonl` now applies the decision log's own
+scrubbed-column redaction to `summary`, `customer_goal`, `already_tried` and `suggested_first_check`, and
+names every redaction on the line in `handover_redactions` rather than altering text silently. One policy,
+in one place: `logging_store.redact` is public for this reason, because two artefacts holding
+customer-derived text under two different policies is how one of them becomes the leak.
+
+That is *stricter* than the log's own `summary` column, which is unscrubbed by the author's standing
+decision (FR-13 §7). Two things stay open for the author and are now written into R14: whether the log's
+`summary` should be brought up to this policy, and that this policy does **not** redact phone numbers —
+`guardrails.phones_in` exists and is not used here.
+
+**T-FR14-18 no longer asserts on `outcomes.jsonl`.** FR-14 §18's property is about `metrics.json`,
+`metrics.md` and the log's `detail`, and the test now checks the log's `detail` directly, which it never
+did. What the run output may carry is `T-R3-5`, with the real pipeline and a ticket that actually contains
+an email address.
+
+`scripts/review_sample.py` writes the sheet the two assessors fill in. It samples with `random.Random(seed)`
+over the lines **sorted by ticket id**, not in file order: the two of them run it on different machines,
+and a sample that depended on how the input file happened to be arranged would not be the same sample.
+Asking for 50 from a run that answered 6 writes 6 rows, says so, and exits 0.
+
+## D-64 · A test that builds a provider client must own its cache path
+
+`tests/test_fr14_harness.py`'s `settings()` helper did not override `llm_cache_path`, so it defaulted to
+`./storage/llm_cache.sqlite` — the **real** cache, holding real responses from real gate runs. The first
+test in that file to build a `ProviderClient` therefore replayed a recorded answer about a different
+article instead of the payload it had just handed its fake transport, and failed with `invalid_citation`
+for no visible reason. Twenty minutes went into retrieval before the cause was obvious.
+
+The helper now sets it, with the reason written beside it. `tests/test_pipeline.py` had always set it,
+which is why this had never bitten: the hazard was one file away the whole time.
+
+## D-65 · A check that did not run is not a pass, on the terminal path too (FR-12, FR-13)
+
+`_after_check` has always read a missing guardrail report as blocked — `blocked = report is None or not
+report.passed` — while `_terminal_reason` read it as a pass, escalating only on `report is not None and not
+report.passed`. The two disagreed about one state: a usable draft with no report.
+
+That state is unreachable today, because `_node_check` returns either a report or a `failure`. It is fixed
+anyway, because D-63 changed what it would cost. Before D-63, `answered` decided a column in a report.
+Since D-63 it is the **only** gate on writing the outbound text to the decision log and to
+`outcomes.jsonl`. A future early return in `_node_check` would therefore produce an `auto_respond` with
+`guardrail_results: []`, a reply persisted in two artefacts, and no guardrail having run on it.
+
+`_terminal_reason` now returns `guardrails_did_not_run` for that state, matching `_after_check`. FR-12 §3.3
+already says a check that raises is a failure and not a pass; this makes a check that never produced a
+report read the same way. T-R3-7.

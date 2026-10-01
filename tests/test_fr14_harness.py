@@ -31,6 +31,11 @@ def settings(tmp_path, **overrides):
         "confidence_threshold": 0.8,
         "retrieval_top_k": 3,
         "model_name": "test-model",
+        # Without this the provider cache defaults to ./storage/llm_cache.sqlite — the real
+        # one, holding real responses from real gate runs. A test that builds a ProviderClient
+        # then replays a recorded answer about a different article instead of the payload it
+        # handed the fake transport, and fails with `invalid_citation` for no visible reason.
+        "llm_cache_path": tmp_path / "llm_cache.sqlite",
     }
     values.update(overrides)
     return Settings(**values)
@@ -321,17 +326,28 @@ def test_T_FR14_17_a_log_that_cannot_be_written_stops_the_run(tmp_path):
 
 
 def test_T_FR14_18_no_customer_text_reaches_the_report_or_the_log(tmp_path):
-    """NFR-04: the report and the log carry decisions, not the customer's words."""
+    """NFR-04: the report and the log carry decisions, not the customer's words.
+
+    `outcomes.jsonl` is deliberately **not** in this list any more. It was, and the test passed
+    only because it runs a `FakePipeline` that produces no handover and no reply — so the
+    property it appeared to guarantee was never exercised (R3 review). FR-14 §18 is about
+    `metrics.json`, `metrics.md` and the log's `detail`; FR-01 requires the handover package,
+    which is customer-derived by definition, and R3 requires it in the run output.
+    What `outcomes.jsonl` may carry is `test_T_R3_5` below, with the real pipeline.
+    """
     tickets = load_tickets(VALIDATION)
     phrases = [t.body[:40] for t in tickets[:10] if len(t.body) > 40]
 
     harness(tmp_path, FakePipeline(raise_on={tickets[0].ticket_id}))
 
     written = ((tmp_path / "out" / "metrics.json").read_text(encoding="utf-8")
-               + (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8")
-               + (tmp_path / "out" / "outcomes.jsonl").read_text(encoding="utf-8"))
+               + (tmp_path / "out" / "metrics.md").read_text(encoding="utf-8"))
     for phrase in phrases:
         assert phrase not in written, f"customer text in the report: {phrase!r}"
+    with DecisionLog(tmp_path / "decisions.db") as log:
+        details = " ".join(r["detail"] or "" for r in log.rows())
+    for phrase in phrases:
+        assert phrase not in details, f"customer text in the log detail: {phrase!r}"
 
     with DecisionLog(tmp_path / "decisions.db") as log:
         rows = json.dumps(log.rows(), default=str)
@@ -550,3 +566,282 @@ def test_T_FR14_27_guardrail_blocks_are_counted_even_though_the_ticket_escalates
     assert report.metrics["volume"]["blocked_by_guardrails"] == 80
     assert report.metrics["governance"]["guardrail_activations_by_type"] == {"private_data": 80}
     assert report.metrics["governance"]["private_data_detections"] == 80
+
+
+# --- R3: the text that was sent, and the note that went with it ------------------------
+
+
+def real_pipeline(tmp_path, answers=True, handover_parses=True):
+    """The real graph over fake edges, so `reply` and `handover` are genuinely produced.
+
+    A `FakePipeline` returning a hand-built `Outcome` would assert that the harness copies a
+    string it was handed. What R3 exists for is the text the system actually sends, so the
+    drafter, the guardrails and the handover writer are all the real ones.
+    """
+    from ticketing_agent.classify import Classification
+    from ticketing_agent.generate import Drafter
+    from ticketing_agent.guardrails import Guardrails, JudgeVerdict
+    from ticketing_agent.handover import HandoverWriter
+    from ticketing_agent.pipeline import SupportPipeline
+    from ticketing_agent.provider import FakeTransport, ProviderClient
+    from ticketing_agent.route import Router
+
+    config = settings(tmp_path)
+    retriever = Retriever(config, embedder=HashingEmbedder(),
+                          client=chromadb.PersistentClient(path=str(tmp_path / "chroma-real")))
+    retriever.build_index(DOCS)
+    # Drafted from what *the ticket* retrieves, not from a query of our own. The pipeline
+    # searches `ticket.text` — subject and body, cleaned — so searching the body alone picks a
+    # different passage and every draft is refused with `invalid_citation`, which is FR-11
+    # working correctly and a test that never answers anything.
+    from ticketing_agent.ingest import normalise_ticket
+
+    passage = retriever.search(normalise_ticket(_answerable_entry(0), index=0).text)[0]
+    # The longest sentence of that passage, quoted verbatim. The *first* sentence of a
+    # Resolution section is often a numbered stub ("1."), which clears no content-word overlap
+    # floor and is refused by the grounding check — correctly, and uselessly for this test.
+    grounded = max((s.strip() for s in passage.text.replace("\n", " ").split(". ")), key=len)
+
+    class Fixed:
+        def classify(self, ticket):
+            return Classification(
+                intent="billing_query" if answers else "security_incident",
+                intent_confidence=0.95,
+                intent_alternatives=(("quota_or_overage", 0.02),), urgency="high",
+                urgency_confidence=0.7, urgency_reason="closest to DEV-0001")
+
+    class Judge:
+        def check(self, sentences, retrieved, indices=None):
+            return JudgeVerdict(unsupported=(), detail="judged", prompt_version="PR-03 v1.0")
+
+    draft = json.dumps({"answerable": True, "unknown_reason": "", "sentences": [
+        {"text": grounded, "citations": [passage.chunk_id]}]})
+    note = json.dumps({"summary": "The customer wants their invoice breakdown.",
+                       "customer_goal": "See the charge for each service.",
+                       "already_tried": ["checked the invoice PDF"],
+                       "system_uncertainty": "ignored by FR-01 §3.4",
+                       "relevant_passages": [passage.chunk_id],
+                       "suggested_first_check": "Confirm the billing period."})
+    # `handover_parses=False` makes PR-02's reply unusable, so `HandoverWriter` falls back to
+    # its template — the path that copies the ticket's own first sentence into `customer_goal`,
+    # and the only one on which the run output can carry raw customer text.
+    body = draft if answers else (note if handover_parses else json.dumps({"not": "a note"}))
+    transport = FakeTransport([{"choices": [{"message": {"content": body}}],
+                                "model": "test-model", "system_fingerprint": "fp"}] * 400)
+    client = ProviderClient(config, transport=transport)
+    return SupportPipeline(retriever=retriever, classifier=Fixed(), router=Router(config),
+                           drafter=Drafter(client), guardrails=Guardrails(judge=Judge()),
+                           handover_writer=HandoverWriter(client), settings=config)
+
+
+def _answerable_entry(n: int) -> dict:
+    """One ordinary billing question. Every ticket is identical apart from its id, because what
+    is under test is the run output, not the retrieval."""
+    return {"ticket_id": f"ANS-{n:03d}", "channel": "email", "subject": "Invoice question",
+            "body": "Where can I see the breakdown of my invoice by service?",
+            "received_at": "2026-05-01T09:00:00Z", "customer_tier": "standard",
+            "customer_region": "europe", "language_fluency": "fluent",
+            "customer_name": "Dana Okonkwo"}
+
+
+def answerable_file(tmp_path, count=6):
+    """A small input file of answerable tickets. There is no such fixture: the engineered
+    corpus is PII, injection, money and malformed tickets, all of which escalate by design."""
+    path = tmp_path / "answerable.json"
+    path.write_text(json.dumps([_answerable_entry(n) for n in range(count)]), encoding="utf-8")
+    return path
+
+
+def _lines(tmp_path):
+    return [json.loads(line) for line in
+            (tmp_path / "out" / "outcomes.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+def test_T_R3_1_every_answered_line_carries_the_text_that_was_sent(tmp_path):
+    """R3 (FR-14, NFR-03): without the reply, the two-assessor review cannot be done at all.
+
+    `outcomes.jsonl` carried the decision, the citations and the segments but not one word of
+    what went to the customer — so hallucination rate and citation accuracy, which the
+    Evaluation Framework measures by human review of the text, were unmeasurable, the demo
+    could not show what was sent, and a complaint could not be reconstructed.
+    """
+    from ticketing_agent.generate import DISCLOSURE
+
+    harness(tmp_path, real_pipeline(tmp_path), input_path=answerable_file(tmp_path))
+    answered = [line for line in _lines(tmp_path) if line["decision"] == "auto_respond"]
+
+    assert answered, "this fixture file is meant to produce answers"
+    for line in answered:
+        assert line["reply"], line["ticket_id"]
+        assert DISCLOSURE in line["reply"], "FR-06's disclosure is part of what was sent"
+        assert line["citations"], "and the passages it was drafted from"
+        cited = {p["chunk_id"] for p in line["cited_passages"]}
+        assert cited == set(line["citations"]), "the sheet needs the text, not only the ids"
+        assert all(p["text"] for p in line["cited_passages"])
+        assert line["intent"] and line["intent_confidence"] is not None
+        assert line["urgency"] == "high"
+
+
+def test_T_R3_2_every_escalated_line_carries_its_handover(tmp_path):
+    """R3 (FR-01): the note a tier-two engineer is given, in the run output."""
+    harness(tmp_path, real_pipeline(tmp_path, answers=False),
+            input_path=answerable_file(tmp_path))
+    escalated = [line for line in _lines(tmp_path) if line["decision"] == "escalate"]
+
+    assert escalated
+    for line in escalated:
+        assert line["reply"] is None, "nothing was sent"
+        note = line["handover"]
+        assert note["summary"] and note["system_uncertainty"], line["ticket_id"]
+        assert note["customer_goal"]
+        assert note["suggested_first_check"], "FR-01: where a tier-two engineer should start"
+        assert isinstance(note["already_tried"], list) and note["already_tried"]
+        assert line["handover_redactions"] == [], "nothing private in this fixture to redact"
+
+
+def test_T_R3_4_the_reply_is_on_the_terminal_row_too(tmp_path):
+    """R3 (FR-13): a complaint is reconstructed from the log, not from a run directory."""
+    harness(tmp_path, real_pipeline(tmp_path), input_path=answerable_file(tmp_path))
+
+    with DecisionLog(tmp_path / "decisions.db") as log:
+        rows = log.terminal_rows()
+    answered = [r for r in rows if r["decision"] == "auto_respond"]
+    assert answered
+    assert all(r["reply_text"] for r in answered)
+    assert all(r["reply_text"] is None for r in rows if r["decision"] == "escalate"), (
+        "a withheld draft is not a sent reply, and the log must not imply it was")
+
+
+def test_T_R3_3_the_review_sheet_is_a_sample_a_person_can_work_through(tmp_path):
+    """R3: `scripts/review_sample.py` — n rows, deterministic for a seed, with the passages."""
+    import csv
+
+    from scripts.review_sample import main as review_sample
+
+    # 5 of 12, not 3 of 6: with C(6,3) = 20 an unseeded sampler passes this about one run in
+    # twenty, which is not a determinism test. C(12,5) = 792.
+    harness(tmp_path, real_pipeline(tmp_path), input_path=answerable_file(tmp_path, count=12))
+    source = tmp_path / "out" / "outcomes.jsonl"
+    first, second, other_seed = tmp_path / "a.csv", tmp_path / "b.csv", tmp_path / "c.csv"
+
+    assert review_sample(["--input", str(source), "--n", "5", "--seed", "1",
+                          "--output", str(first)]) == 0
+    assert review_sample(["--input", str(source), "--n", "5", "--seed", "1",
+                          "--output", str(second)]) == 0
+    assert review_sample(["--input", str(source), "--n", "5", "--seed", "2",
+                          "--output", str(other_seed)]) == 0
+    assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8"), (
+        "the same seed gives the same sample, so two assessors review the same replies")
+    assert first.read_text(encoding="utf-8") != other_seed.read_text(encoding="utf-8"), (
+        "and it is a sample, not the first five")
+
+    rows = list(csv.DictReader(first.open(encoding="utf-8")))
+    assert len(rows) == 5
+    for row in rows:
+        assert row["reply"] and row["cited_passages"]
+        for column in ("assessor_1_supported", "assessor_1_notes",
+                       "assessor_2_supported", "assessor_2_notes"):
+            assert column in row and row[column] == "", "the assessors fill these in"
+
+
+def test_T_R3_3b_a_sample_larger_than_the_file_takes_what_there_is(tmp_path):
+    """Asking for 50 from a file of 6 is not an error; the sheet says what it got."""
+    import csv
+
+    from scripts.review_sample import main as review_sample
+
+    harness(tmp_path, real_pipeline(tmp_path), input_path=answerable_file(tmp_path))
+    out = tmp_path / "sheet.csv"
+    assert review_sample(["--input", str(tmp_path / "out" / "outcomes.jsonl"), "--n", "500",
+                          "--seed", "1", "--output", str(out)]) == 0
+    answered = [line for line in _lines(tmp_path) if line["decision"] == "auto_respond"]
+    assert len(list(csv.DictReader(out.open(encoding="utf-8")))) == len(answered)
+
+
+def test_T_R3_5_the_run_output_redacts_what_the_log_would_redact(tmp_path):
+    """R3 review (high): `outcomes.jsonl` was writing raw customer text to disk.
+
+    On the template path `customer_goal` is literally the first sentence of the body
+    (`handover.py`), and `already_tried` is extracted from it by PR-02. Written raw, an email
+    address and a phone number from a ticket went straight into a file — and `T-FR14-18`, the
+    test that forbids exactly that, could not see it, because it runs a `FakePipeline` that
+    produces no handover at all.
+
+    The handover is customer-derived **by requirement** (FR-01), so the fix is not to strip it
+    but to hold it to the same policy the decision log holds its scrubbed columns to, and to
+    name every redaction on the line rather than altering text silently.
+    """
+    entry = _answerable_entry(0)
+    # In the **first** sentence: that is what the template puts into `customer_goal`.
+    entry["body"] = ("Please write back to dana.okonkwo@acme-health.example once someone has "
+                     "looked at this. The service has been down since Tuesday.")
+    path = tmp_path / "leaky.json"
+    path.write_text(json.dumps([entry]), encoding="utf-8")
+
+    harness(tmp_path, real_pipeline(tmp_path, answers=False, handover_parses=False),
+            input_path=path)
+    written = (tmp_path / "out" / "outcomes.jsonl").read_text(encoding="utf-8")
+    line = json.loads(written)
+
+    assert line["decision"] == "escalate"
+    assert "dana.okonkwo@acme-health.example" not in written, "an email address reached the file"
+    assert "[redacted:email]" in written
+    assert line["handover_redactions"], "and the line says what was redacted, not just that"
+    assert any(r.endswith(":email") for r in line["handover_redactions"])
+
+
+def test_T_R3_4b_a_draft_that_was_written_and_then_withheld_is_not_a_sent_reply(tmp_path):
+    """R3 review (high): the one case D-63 rests on, and it was untested.
+
+    `T-R3-4` asserted `reply_text is None` over the escalations of a run that produced none, so
+    `all()` over an empty sequence made it vacuous — and it was unfalsifiable anyway, because
+    `Outcome.draft` is already None on every escalation. This builds the real thing: a draft
+    that passes generation and is then blocked by a guardrail. The log must not imply the
+    customer received it.
+    """
+    from ticketing_agent.guardrails import Guardrails, JudgeVerdict
+
+    pipeline = real_pipeline(tmp_path)
+
+    class Blocking:
+        """Refuses every draft, the way the grounding check refuses an unsupported one."""
+
+        def check(self, sentences, retrieved, indices=None):
+            return JudgeVerdict(unsupported=tuple(range(len(sentences))),
+                                detail="nothing supported", prompt_version="PR-03 v1.0")
+
+    pipeline._guardrails = Guardrails(judge=Blocking())
+    harness(tmp_path, pipeline, input_path=answerable_file(tmp_path, count=3))
+
+    lines = _lines(tmp_path)
+    assert lines and all(line["decision"] == "escalate" for line in lines), (
+        "every draft was blocked, so nothing was sent")
+    assert all(line["reply"] is None for line in lines)
+
+    with DecisionLog(tmp_path / "decisions.db") as log:
+        rows = log.rows()
+    blocked = [r for r in rows if r["decision"] == "block"]
+    terminal = [r for r in rows if r["decision"] in {"auto_respond", "escalate"}]
+    assert blocked, "FR-12 §5: the block is its own row"
+    assert terminal and all(r["decision"] == "escalate" for r in terminal)
+    assert all(r["reply_text"] is None for r in rows), (
+        "a withheld draft is not a sent reply, on any row")
+
+
+def test_T_R3_3c_pointing_the_sheet_at_the_wrong_file_is_a_clean_exit(tmp_path, capsys):
+    """R3 review (low): a one-line JSON array parses, then `.get` blows up with a traceback.
+
+    The likely operator slip is `--input` at a run's `metrics.json` or at a tickets file.
+    """
+    from scripts.review_sample import main as review_sample
+
+    wrong = tmp_path / "metrics.json"
+    wrong.write_text(json.dumps([{"ticket_id": "T-1"}]), encoding="utf-8")
+    assert review_sample(["--input", str(wrong), "--n", "5", "--seed", "1",
+                          "--output", str(tmp_path / "s.csv")]) == 2
+    assert "not an outcomes.jsonl" in capsys.readouterr().err
+
+    assert review_sample(["--input", str(tmp_path / "missing.jsonl"), "--n", "5", "--seed", "1",
+                          "--output", str(tmp_path / "s.csv")]) == 2
+    assert review_sample(["--input", str(wrong), "--n", "0", "--seed", "1",
+                          "--output", str(tmp_path / "s.csv")]) == 2

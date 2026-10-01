@@ -1518,3 +1518,93 @@ it belongs to row R10, which reviews the API.
 and that its `urgency: null` is the defect, not honest reporting — the document said the opposite.
 
 `uv run pytest -q` → **516 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R3 · The text that was sent, in the run output and in the log (FR-14, FR-13, NFR-03)
+
+`outcomes.jsonl` carried the decision, the citations, the latency and the segments — and **not one word of
+what went to the customer**. That is not a gap in reporting. NFR-03's hallucination rate and citation
+accuracy are measured, by the Evaluation Framework's own definition, by human review of at least 50
+responses by two assessors with an agreement rate. Without the text those numbers could not be produced at
+all: not "were not produced yet", *could not be*. A demonstration could not show what the system sends,
+and a complaint could not be reconstructed.
+
+**Files changed.** `evaluation/harness.py` (new `_outcome_line` and `_handover_fields`),
+`src/ticketing_agent/logging_store.py` (schema 2 → 3: `reply_text`; `redact` made public),
+`src/ticketing_agent/pipeline.py` (`Outcome` gained `customer_goal`, `already_tried`,
+`suggested_first_check`; `to_entry` sets `reply_text`; `_terminal_reason` is fail-closed on a missing
+guardrail report), `scripts/review_sample.py` (new). D-63, D-64, D-65.
+
+**Tests added (10).** `test_T_R3_1`, `_2`, `_3`, `_3b`, `_3c`, `_4`, `_4b`, `_5` in
+`tests/test_fr14_harness.py`; `_6` in `tests/test_fr13_decision_log.py`; `_7` in
+`tests/test_pipeline.py`. Plus `T-R2-12` (the migration race). Spec lists extended: FR-14 §6 items 28–35,
+FR-13 §6 items 28–30 and the §2 column table, which had documented neither `reply_text` nor R2's
+`urgency_reason`.
+
+### The review found two highs. Both were real, and one was mine.
+
+**1. The run output was writing raw customer text to disk, and the test that forbids exactly that could
+not see it.** On the template path `customer_goal` is literally the first sentence of the ticket body, and
+`already_tried` is extracted from it by PR-02. `_safe` substitutes only when `secrets_in` fires — national
+ids, card numbers, credentials — so an email address went straight through. The reviewer reproduced it:
+`"customer_goal": "Please write back to dana.okonkwo@acme-health.example or call 07700900123."`
+
+`test_T_FR14_18_no_customer_text_reaches_the_report_or_the_log` asserted on `outcomes.jsonl` and passed
+throughout, because it runs a `FakePipeline` that produces no handover and no reply at all. **A test can
+forbid something for a year without ever having been in a position to detect it.** That is the same shape
+as R2's queue test, two rows running.
+
+The handover is customer-derived *by requirement* (FR-01 asks what the customer is trying to achieve), so
+the fix is not to strip it. The run output now applies the decision log's own scrubbed-column redaction to
+all four handover fields and names every redaction on the line in `handover_redactions`, rather than
+altering text silently. `logging_store.redact` is public for this: two artefacts holding customer-derived
+text under two different policies is how one of them becomes the leak. T-FR14-18 now asserts FR-14 §18's
+actual property — `metrics.json`, `metrics.md` and the log's `detail`, which it had never checked — and
+T-R3-5 covers the run output with the real pipeline and a ticket that really contains an email address.
+
+This is *stricter* than the log's own `summary` column, which is unscrubbed by the author's standing
+decision. **Two items are now written into R14 rather than being quietly settled by me**: whether the log's
+`summary` should be brought up to the same policy, and that the policy does not cover phone numbers —
+`guardrails.phones_in` exists, deliberately tolerant after D-51, and is used by neither artefact.
+
+**2. My own T-R3-4 asserted nothing, and could not have failed anyway.** `all(... for r in rows if
+r["decision"] == "escalate")` ran over a fixture that produced six answers and zero escalations, so `all()`
+over an empty sequence was `True`. And it was unfalsifiable regardless: `Outcome.draft` is already None on
+every escalation, so dropping the conditional in `to_entry` would still have written NULL. The single case
+D-63 rests on — a draft written, then withheld — was untested. T-R3-4b builds it with a judge that refuses
+every draft, and asserts the FR-12 block row is written and `reply_text` is NULL on *every* row.
+
+### Four mediums, all fixed
+
+- **The migration had a race that stopped the run.** `_migrate` read `PRAGMA table_info` then issued
+  `ALTER TABLE` with no tolerance for "already added". `api.py` opens a log per request, so a harness run
+  starting while one dashboard poll was in flight would hit it — and the constructor turns any sqlite error
+  into `DecisionLogUnavailable`, which under D-27 aborts the whole run. Losing a race to add a column
+  someone else has already added is not a reason to stop. T-R2-12; T-R3-6 checks a migration that really
+  failed still does stop it.
+- **`_terminal_reason` read a missing guardrail report as a pass** while `_after_check` has always read it
+  as blocked. Unreachable today, fixed anyway: since this row, `answered` is the *only* gate on persisting
+  the outbound text to two artefacts, so the cost of it becoming reachable changed. D-65, T-R3-7.
+- **FR-13's spec documented neither new column.** The log's schema changed twice in two rows with its own
+  spec unchanged. §2's table and §7's privacy discussion now carry both.
+- **D-64's fix was one file short.** `tests/test_fr04_api.py` also built a `ProviderClient` without its own
+  cache path, so the suite was reading from and **writing into** `storage/llm_cache.sqlite` — the cache
+  gate runs replay from. Six rows with `model: test-model`, both timestamps from today's runs. Fixed in
+  that helper too; the six rows removed after backing the file up to
+  `storage/llm_cache.sqlite.bak-before-test-row-cleanup`. The cache key includes the model name, so they
+  could never have been served to a real run — clutter, not a correctness risk.
+
+Five lows fixed: a one-line JSON array now exits 2 naming the mistake instead of raising `AttributeError`
+(the likely slip is pointing `--input` at a `metrics.json`); the sort key is `(ticket_id, source_index)`,
+because duplicate ticket ids are legal (D-12) and a stable sort left those tied on file order — the exact
+dependency the sort exists to remove; sampling draws shuffled *indices* rather than using `Random.sample`,
+whose consumption of the Mersenne Twister stream is not a documented cross-version guarantee; T-R3-3 now
+samples 5 of 12 rather than 3 of 6, where an unseeded sampler passed about one run in twenty; and
+`suggested_first_check` is asserted.
+
+Recorded, not fixed: the log's `reply_text` is capped at 4000 characters and `outcomes.jsonl` is not, so an
+unusually long reply differs between them. Noted in D-63 — the run output is the artefact for review, the
+log is the artefact for audit, and the log says when it cut something.
+
+`uv run pytest -q` → **529 passed**. `uv run ruff check .` → clean.

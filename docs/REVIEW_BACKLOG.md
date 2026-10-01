@@ -21,7 +21,7 @@ the top of that file and in .claude/commands/next-feature.md. Stop at any HUMAN,
 |---|---|---|---|---|---|
 | R1 | Establish the current test status and fix the README test count | A12, NFR-09 | — | build | DONE |
 | R2 | Put classification, urgency and alternatives on every decision-log row | FR-13, FR-05, FR-08, A8 | R1 | build | DONE |
-| R3 | Persist the sent reply and the handover note in the run output | FR-14, FR-13, NFR-03 | R1 | build | TODO |
+| R3 | Persist the sent reply and the handover note in the run output | FR-14, FR-13, NFR-03 | R1 | build | DONE |
 | R4 | Make the metrics report describe the system that actually ran | FR-14, A10 | R1 | build | TODO |
 | R5 | Report real latency; mark cache replays as replays | FR-14, NFR-01 | R4 | build | TODO |
 | R6 | Report "answered but labelled escalate / unanswerable" | FR-14, FR-02, NFR-03 | R4 | build | TODO |
@@ -253,3 +253,15 @@ From `docs/pack_alignment.md` §4: the risk register R-01…R-08 with likelihood
 mitigation and a named owner (add R-06 provider unavailable and R-09 paid-provider cost); the six-step
 incident procedure; the governance declaration; the kill-switch authorisation; the decision-log retention
 period; whether the handover `summary` may carry customer text.
+
+Two items added by R3, both privacy calls only the author can make:
+
+- **Whether the decision log's `summary` column should be redacted like `outcomes.jsonl`'s handover now is.**
+  R3 put the whole handover package into a file on disk and applied the log's scrubbed-column policy to it
+  (D-63), which is *stricter* than the log's own `summary`. The two should not stay out of step on a
+  judgement call. FR-13 §7 has the standing decision to leave `summary` unscrubbed.
+- **Whether phone numbers should be in the redaction policy at all.** `_PRIVATE_PATTERNS` covers email,
+  national id, card number, credential and private key. `guardrails.phones_in` exists — deliberately
+  tolerant, because a digits-only reading blocked a billing question quoting two 16-digit invoice
+  references (D-51) — and is not used by the log or by the run output. So a phone number in a ticket body
+  can reach `customer_goal` in `outcomes.jsonl` and `summary` in the log.

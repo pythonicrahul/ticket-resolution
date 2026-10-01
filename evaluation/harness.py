@@ -29,7 +29,12 @@ from typing import Any
 
 from ticketing_agent.config import ConfigError, Settings, load_settings
 from ticketing_agent.ingest import Ticket, TicketFileError, evaluation_labels, load_tickets
-from ticketing_agent.logging_store import DecisionLog, DecisionLogError, InvalidDecision
+from ticketing_agent.logging_store import (
+    DecisionLog,
+    DecisionLogError,
+    InvalidDecision,
+    redact,
+)
 from ticketing_agent.pipeline import Outcome, Pipeline, StubPipeline
 from ticketing_agent.retrieve import RetrievalError, Retriever
 
@@ -636,18 +641,89 @@ def _write_reports(output_dir: Path, metrics: dict[str, Any],
     (output_dir / "metrics.md").write_text(_markdown(metrics), encoding="utf-8")
     with (output_dir / "outcomes.jsonl").open("w", encoding="utf-8") as handle:
         for result in results:
-            handle.write(json.dumps({
-                "ticket_id": result.ticket.ticket_id,
-                "source_index": result.ticket.source_index,
-                "decision": result.outcome.decision,
-                "reason": result.outcome.reason,
-                "all_reasons": list(result.outcome.all_reasons),
-                "doc_ids": [p.doc_id for p in result.outcome.passages],
-                "chunk_ids": [p.chunk_id for p in result.outcome.passages],
-                "citations": list(result.outcome.citations),
-                "latency_ms": round(result.latency_ms, 1),
-                "segments": result.segments(),
-            }, sort_keys=True) + "\n")
+            handle.write(json.dumps(_outcome_line(result), sort_keys=True) + "\n")
+
+
+def _outcome_line(result: TicketResult) -> dict[str, Any]:
+    """One line of `outcomes.jsonl` (FR-14, NFR-03).
+
+    R3: this used to carry the decision, the citations and the segments but **not one word of
+    what was sent**. The Evaluation Framework measures hallucination rate and citation accuracy
+    by human review of the text — two assessors over at least 50 responses — so without the
+    reply and the passages it cited, the tier-two review the PRD asks for could not be done at
+    all, the demo could not show what went out, and a complaint could not be reconstructed.
+    """
+    outcome = result.outcome
+    cited = set(outcome.citations)
+    return {
+        "ticket_id": result.ticket.ticket_id,
+        "source_index": result.ticket.source_index,
+        "decision": outcome.decision,
+        "reason": outcome.reason,
+        "all_reasons": list(outcome.all_reasons),
+        "doc_ids": [p.doc_id for p in outcome.passages],
+        "chunk_ids": [p.chunk_id for p in outcome.passages],
+        "citations": list(outcome.citations),
+        # The exact outbound text, or null. Never a withheld draft: `Outcome.draft` is None on
+        # every escalation, and a reviewer must not be shown text no customer received.
+        "reply": outcome.draft if outcome.answered else None,
+        # The passages the reply cited, with their text — an assessor cannot judge "supported"
+        # against a list of chunk ids.
+        "cited_passages": [
+            {"chunk_id": p.chunk_id, "doc_id": p.doc_id, "title": p.title,
+             "heading": p.heading, "text": p.text, "score": round(p.score, 4)}
+            for p in outcome.passages if p.chunk_id in cited],
+        # FR-01's package, for the escalations: what a tier-two engineer is handed.
+        **_handover_fields(outcome),
+        "intent": outcome.intent,
+        "prediction_value": outcome.prediction_value,
+        "intent_confidence": outcome.intent_confidence,
+        "urgency": outcome.urgency,
+        "latency_ms": round(result.latency_ms, 1),
+        "segments": result.segments(),
+    }
+
+
+#: The handover fields that are derived from the customer's own words, and therefore go through
+#: the decision log's redaction before they are written to a file (NFR-04). `customer_goal` is
+#: literally the first sentence of the body on the template path, and `already_tried` is
+#: extracted from it by PR-02.
+_CUSTOMER_DERIVED = ("summary", "system_uncertainty", "customer_goal", "suggested_first_check")
+
+
+def _handover_fields(outcome: Outcome) -> dict[str, Any]:
+    """FR-01's package for an escalated ticket, redacted the way the decision log redacts.
+
+    R3 review (high): written raw, this put an email address and a phone number from a ticket
+    body straight into a file on disk, and `T-FR14-18` — the test that forbids exactly that —
+    could not see it, because it runs a `FakePipeline` that produces no handover at all.
+
+    Whether the *log's* `summary` column may carry customer text is an open question for the
+    author (FR-13 §7, FR-01 §7, review row R14). Until it is answered, a new artefact does not
+    get a looser policy than the log's scrubbed columns: one policy, applied here, and every
+    redaction is named on the line rather than silently applied.
+    """
+    if outcome.answered:
+        return {"handover": None, "handover_redactions": []}
+    note: dict[str, Any] = {
+        "summary": outcome.summary,
+        "system_uncertainty": outcome.uncertainty,
+        "customer_goal": outcome.customer_goal,
+        "suggested_first_check": outcome.suggested_first_check,
+        "already_tried": list(outcome.already_tried),
+    }
+    redactions: list[str] = []
+    for name in _CUSTOMER_DERIVED:
+        if note[name]:
+            note[name], found = redact(str(note[name]))
+            redactions.extend(f"{name}:{pattern}" for pattern in found)
+    cleaned = []
+    for step in note["already_tried"]:
+        text, found = redact(str(step))
+        cleaned.append(text)
+        redactions.extend(f"already_tried:{pattern}" for pattern in found)
+    note["already_tried"] = cleaned
+    return {"handover": note, "handover_redactions": sorted(set(redactions))}
 
 
 def _markdown(metrics: dict[str, Any]) -> str:

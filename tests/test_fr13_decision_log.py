@@ -599,3 +599,60 @@ def test_T_R2_11_migrating_twice_is_not_an_error(tmp_path):
                                  reason="no_retrieval", explanation="To a person.",
                                  requirement_ids=["FR-10"], urgency_reason="closest to DEV-1"))
         assert log.rows()[0]["urgency_reason"] == "closest to DEV-1"
+
+
+def test_T_R2_12_losing_the_migration_race_does_not_stop_the_run(tmp_path):
+    """R3 review: `api.py` opens a log per request, so a harness run starting while one
+    dashboard poll is in flight can have the column added between the PRAGMA and the ALTER.
+
+    The constructor turns any sqlite error into `DecisionLogUnavailable`, and D-27 makes that
+    stop the entire run — so losing this race used to abort a gate run on its first ticket.
+    """
+    import sqlite3
+
+    path = tmp_path / "race.db"
+    with DecisionLog(path, run_id="v1"):
+        pass
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE decisions DROP COLUMN reply_text")
+    connection.commit()
+
+    # Add it back from "another process" at the moment the PRAGMA has already been read.
+    original = DecisionLog._migrate
+
+    def racing(self):
+        connection.execute("ALTER TABLE decisions ADD COLUMN reply_text TEXT")
+        connection.commit()
+        return original(self)
+
+    DecisionLog._migrate = racing
+    try:
+        with DecisionLog(path, run_id="v3") as log:
+            log.record(DecisionEntry(ticket_id="R-1", stage="routing", decision="auto_respond",
+                                     explanation="Answered.", threshold_applied=0.85,
+                                     requirement_ids=["FR-02"], reply_text="Hi Dana, ..."))
+            assert log.rows()[0]["reply_text"] == "Hi Dana, ..."
+    finally:
+        DecisionLog._migrate = original
+        connection.close()
+
+
+def test_T_R3_6_a_migration_that_really_failed_still_stops_the_run(monkeypatch, tmp_path):
+    """The race tolerance must not have turned every schema problem into a shrug (D-27).
+
+    `ALTER TABLE ... ADD COLUMN x TEXT NOT NULL` with no default is refused by SQLite, so this
+    is a genuine `OperationalError` that leaves the column absent — the case the tolerance must
+    not swallow.
+    """
+    from ticketing_agent import logging_store
+
+    path = tmp_path / "broken.db"
+    with DecisionLog(path, run_id="a") as log:
+        log.record(DecisionEntry(ticket_id="X-1", stage="routing", decision="escalate",
+                                 reason="no_retrieval", explanation="To a person.",
+                                 requirement_ids=["FR-10"]))
+
+    monkeypatch.setattr(logging_store, "_ADDED_COLUMNS",
+                        (*logging_store._ADDED_COLUMNS, ("impossible", "TEXT NOT NULL")))
+    with pytest.raises(DecisionLogUnavailable):
+        DecisionLog(path, run_id="b")

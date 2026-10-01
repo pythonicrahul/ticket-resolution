@@ -68,6 +68,12 @@ class Outcome:
     urgency_reason: str | None = None
     summary: str | None = None
     uncertainty: str | None = None
+    # R3: the rest of FR-01's handover package. The only fields here that are not decision-log
+    # columns — they exist for `outcomes.jsonl`, which is what a tier-two engineer and the
+    # Evaluation Framework's two assessors actually read.
+    customer_goal: str | None = None
+    already_tried: tuple[str, ...] = ()
+    suggested_first_check: str | None = None
     detail: str | None = None
     prompt_version: str | None = None
     model_name: str | None = None
@@ -95,6 +101,10 @@ class Outcome:
             detail=self.detail,
             summary=self.summary,
             uncertainty=self.uncertainty,
+            # Only what was sent. `self.draft` is None on every escalation, including one whose
+            # draft was written and then withheld, so this cannot claim a delivery that did not
+            # happen (T-R3-4).
+            reply_text=self.draft if self.answered else None,
             prediction_value=self.prediction_value,
             prediction_confidence=self.prediction_confidence,
             threshold_applied=self.threshold_applied,
@@ -459,6 +469,9 @@ class SupportPipeline:
             threshold_applied=decision.threshold_applied,
             summary=note.summary if note is not None else None,
             uncertainty=note.system_uncertainty if note is not None else None,
+            customer_goal=note.customer_goal if note is not None else None,
+            already_tried=tuple(note.already_tried) if note is not None else (),
+            suggested_first_check=note.suggested_first_check if note is not None else None,
             detail=detail,
             # Whichever prompt produced the artefact this row is about: the reply for an answer,
             # the handover note for an escalation. One column cannot hold both, and the terminal
@@ -552,6 +565,9 @@ def _failed_outcome(ticket: Ticket, reason: str, detail: str, note: Any,
         f": handling did not complete, so it goes to a person.",
         uncertainty=note.system_uncertainty if note is not None
         else "The system could not finish handling this ticket.",
+        customer_goal=note.customer_goal if note is not None else None,
+        already_tried=tuple(note.already_tried) if note is not None else (),
+        suggested_first_check=note.suggested_first_check if note is not None else None,
         requirement_ids=("FR-14",))
 
 
@@ -593,6 +609,15 @@ def _terminal_reason(state: PipelineState) -> tuple[bool, str | None, str | None
 
     if decision.escalated:
         return False, decision.reason, decision.detail, decision.all_reasons, "routing"
+    if report is None and draft is not None and draft.usable:
+        # FR-12 §3.3: a check that did not run is a failure, not a pass. `_after_check` has
+        # always read it that way (`blocked = report is None or not report.passed`); this
+        # function did not, so the two disagreed about a draft with no report. Unreachable
+        # today — `_node_check` returns a report or a failure — but since R3 `answered` is the
+        # only gate on persisting the outbound text to the log and to the run output, so the
+        # cost of it becoming reachable is a sent-and-recorded reply no guardrail ever saw.
+        return False, "guardrails_did_not_run", "no guardrail report for a usable draft", (
+            "guardrails_did_not_run",), "validation"
     if report is not None and not report.passed:
         return False, report.reason, report.detail, report.all_reasons, "validation"
     if draft is None or not draft.usable:

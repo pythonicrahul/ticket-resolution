@@ -1446,11 +1446,25 @@ Three properties:
 |---|---|
 | `metrics.json` | machine-readable; every figure in the report |
 | `metrics.md` | the human report: volume, business outcomes, technical, classification, governance, reasons, five segment tables, results table, and *what this run does not measure* |
-| `outcomes.jsonl` | one line per ticket: decision, reason, citations, timings |
+| `outcomes.jsonl` | one line per ticket: decision, reason, citations, timings, **the exact reply that was sent** with the text of every passage it cited, and for an escalation the full handover package |
 
 The report ends with an explicit **"What this run does not measure"** section — hallucination
 rate and citation accuracy need human review by two assessors (Evaluation Framework tier
 two); the harness reports unresolvable citations as a *floor* only, and says so.
+
+The sheet those two assessors fill in is produced from the run:
+
+```bash
+uv run python scripts/review_sample.py \
+  --input evaluation/results/<run>/outcomes.jsonl --n 50 --seed 1 \
+  --output evaluation/reports/review_sample.csv
+```
+
+It samples with a fixed seed over the answered lines **sorted by ticket id** — the two assessors
+run it on different machines, and a sample that depended on the input file's order would not be
+the same sample. Each row carries the reply, the text of every passage it cited (an assessor
+cannot judge "supported" against a list of chunk ids), and four empty columns for the two
+verdicts. Asking for 50 from a run that answered 6 writes 6 rows and says so.
 
 ### Fairness (D-37, NFR-06)
 

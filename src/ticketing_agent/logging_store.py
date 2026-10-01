@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Self, TypeVar
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 #: Terminal decisions end a ticket. `block` and `continue` do not: a blocked reply still ends
 #: as an escalation, so it is recorded and then followed by a terminal row (§3.1).
@@ -108,6 +108,12 @@ class DecisionEntry:
     #: classifier's nearest labelled tickets (FR-08 §3.4) — checkable evidence, not a sentence
     #: invented about keywords — and before this column it reached no row in any database.
     urgency_reason: str | None = None
+    #: FR-13, NFR-03: the exact outbound text, on the terminal `auto_respond` row and nowhere
+    #: else. A withheld draft is not a sent reply, and a log that stored it in this column
+    #: would say a customer received something they did not. The Evaluation Framework's human
+    #: review — hallucination rate and citation accuracy, two assessors over ≥50 responses —
+    #: reads the text, so without this column it could not be done from the log at all.
+    reply_text: str | None = None
     sources_used: Sequence[Sequence[Any]] = ()
     retrieved_doc_ids: Sequence[str] = ()
     citations: Sequence[str] = ()
@@ -175,9 +181,12 @@ _JSON_COLUMNS = ("requirement_ids", "all_reasons", "intent_alternatives", "sourc
                  "retrieved_doc_ids", "citations", "guardrail_results", "ingest_defects",
                  "redactions")
 _BOOL_COLUMNS = ("kill_switch",)
-_SCRUBBED_COLUMNS = ("reason", "detail", "explanation", "urgency_reason")
+#: `reply_text` is scrubbed like the rest. It has already passed guardrail 1 (`private_data`)
+#: by the time it reaches a terminal row, so a redaction here should be impossible — which is
+#: exactly why it is worth recording if one ever happens.
+_SCRUBBED_COLUMNS = ("reason", "detail", "explanation", "urgency_reason", "reply_text")
 _TRUNCATED_COLUMNS = ("reason", "detail", "explanation", "summary", "uncertainty",
-                      "urgency_reason")
+                      "urgency_reason", "reply_text")
 
 #: Columns added after schema version 1. `CREATE TABLE IF NOT EXISTS` does nothing to a table
 #: that already exists, so a database written by an older version keeps its old shape and every
@@ -185,6 +194,7 @@ _TRUNCATED_COLUMNS = ("reason", "detail", "explanation", "summary", "uncertainty
 #: applied with `ALTER TABLE ... ADD COLUMN`, which SQLite does in constant time.
 _ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("urgency_reason", "TEXT"),   # v2, FR-05: the evidence behind the urgency
+    ("reply_text", "TEXT"),       # v3, FR-13/NFR-03: the text that was actually sent
 )
 
 _SCHEMA = """
@@ -213,6 +223,7 @@ CREATE TABLE IF NOT EXISTS decisions (
     urgency           TEXT,
     urgency_confidence REAL,
     urgency_reason    TEXT,
+    reply_text        TEXT,
     sources_used      TEXT    NOT NULL,
     retrieved_doc_ids TEXT    NOT NULL,
     citations         TEXT    NOT NULL,
@@ -288,9 +299,20 @@ class DecisionLog:
         present = {row["name"] for row in
                    self._connection.execute("PRAGMA table_info(decisions)")}
         for column, declaration in _ADDED_COLUMNS:
-            if column not in present:
+            if column in present:
+                continue
+            try:
                 self._connection.execute(
                     f"ALTER TABLE decisions ADD COLUMN {column} {declaration}")
+            except sqlite3.OperationalError:
+                # Another process added it between the PRAGMA and the ALTER. `api.py` opens a
+                # log per request, so a harness run starting while one dashboard poll is in
+                # flight hits this window — and the constructor turns any sqlite error into
+                # `DecisionLogUnavailable`, which under D-27 stops the whole run. Losing a race
+                # to add a column someone else has already added is not a reason to stop.
+                if column not in {row["name"] for row in
+                                  self._connection.execute("PRAGMA table_info(decisions)")}:
+                    raise
 
     # --- writing ------------------------------------------------------------------
 
@@ -590,6 +612,16 @@ def _validate(entry: DecisionEntry) -> None:
             "Framework's confidence floor is only demonstrable if the threshold that was "
             "applied is recorded (FR-02)"
         )
+
+
+def redact(text: str) -> tuple[str, list[str]]:
+    """The log's own redaction, for anything else this project writes to disk (NFR-04).
+
+    Public because `outcomes.jsonl` carries handover text that is derived from the ticket, and
+    two artefacts holding customer-derived text under two different policies is how one of them
+    ends up being the leak. One policy, in one place.
+    """
+    return _redact(text)
 
 
 def _redact(text: str) -> tuple[str, list[str]]:
