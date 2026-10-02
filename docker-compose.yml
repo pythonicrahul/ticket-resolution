@@ -30,6 +30,7 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./storage:/app/storage
+      - model-cache:/home/support/.cache
       - ./evaluation/results:/app/evaluation/results
     restart: unless-stopped
 
@@ -44,6 +45,13 @@ services:
       CLASSIFIER_PATH: /app/storage/classifier.joblib
     volumes:
       - ./storage:/app/storage
+      - model-cache:/home/support/.cache
+      # `train` writes evaluation/reports/classifier_calibration.md, the out-of-fold measurement
+      # R8 points at as the one that bears on NFR-03. Inside the container it is lost with the
+      # container, and without the chown in the Dockerfile it cannot be written at all (D-80).
+      - ./evaluation/reports:/app/evaluation/reports
+      # The training set is not in the image: see .dockerignore and D-79.
+      - ./data:/app/data:ro
     profiles: ["tools"]
     command: ["python", "scripts/train_classifier.py"]
 
@@ -61,7 +69,9 @@ services:
       KILL_SWITCH_FILE: /app/storage/KILL_SWITCH
     volumes:
       - ./storage:/app/storage
+      - model-cache:/home/support/.cache
       - ./evaluation/results:/app/evaluation/results
+      - ./evaluation/reports:/app/evaluation/reports
       # The evaluation inputs are not in the image (.dockerignore, D-79): the agents' own
       # answers must not ship to a serving container, and a gate run should be pointed at a file
       # rather than carry one. Mounting `./data` read-only also means an unseen file can be
@@ -120,6 +130,12 @@ services:
     restart: unless-stopped
 
 volumes:
+  # The embedding model (all-MiniLM-L6-v2, 79MB ONNX) is downloaded on first use into
+  # ~/.cache/chroma inside the container. Review row R11 ran `docker compose run --rm train` and
+  # watched it fetch all 79MB — and `--rm` then threw the cache away, so every training run and
+  # every gate run would do it again. A named volume is right here: nothing on the host needs to
+  # read it, and it is a cache rather than an artefact (D-80).
+  model-cache:
   # `storage` is a bind mount on ./storage, not a named volume: FR-16's kill switch has to be
   # reachable with `touch storage/KILL_SWITCH` from the host, and a named volume lives inside
   # Docker's own storage area — inside the VM on macOS — where the host cannot reach it.

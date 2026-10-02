@@ -641,10 +641,40 @@ def test_T_R10_3_a_pipeline_that_cannot_be_built_does_not_lose_the_ticket(tmp_pa
     assert [r["ticket_id"] for r in terminal] == ["NB-1"], "the ticket is not lost"
     assert terminal[0]["decision"] == "escalate"
 
-    # And /health stops claiming the service is ready.
+    # The graph was never built, and /health says so without trying to build one.
     health = api.get("/health").json()
-    assert health["ok"] is False, "a service that 503s every ticket is not ok"
-    assert health["pipeline"] == "unavailable"
+    assert health["pipeline"] == "not built"
+
+
+def test_T_R10_3b_health_reports_a_missing_classifier_without_loading_anything(tmp_path,
+                                                                             retriever):
+    """R10 (HIGH) and R11: `ok: true` with no classifier, and the fix that broke the fix.
+
+    `docker compose up` before `docker compose run --rm train` leaves exactly this state, and
+    `/health` used to call it healthy. My first fix made it honest by *building the pipeline* as
+    a probe — which loads the classifier, builds the Chroma index and downloads a 79MB embedding
+    model, against a HEALTHCHECK the Dockerfile gives five seconds. Running the stack showed
+    `/health` never answering at all.
+
+    So it answers by looking rather than by loading: three `stat` calls, no imports, no index.
+    """
+    # No injected pipeline: this has to be the state a real cold container is in.
+    api = TestClient(build_app(
+        settings(tmp_path, classifier_path=tmp_path / "not-trained-yet.joblib"),
+        retriever=retriever))
+    health = api.get("/health").json()
+
+    assert health["ok"] is False, "a container with no classifier cannot handle a ticket"
+    assert any("classifier" in problem for problem in health["problems"]), health
+    assert health["pipeline"] == "not built", "and nothing was built to find that out"
+
+    # With the file present it is healthy again, still without building anything.
+    (tmp_path / "not-trained-yet.joblib").write_bytes(b"not a real model")
+    health = api.get("/health").json()
+    assert health["ok"] is True, health
+    assert health["problems"] == []
+    assert health["pipeline"] == "not built", (
+        "/health must not build the graph — that is what made it hang on a cold container")
 
 
 def test_T_R10_1b_a_log_attached_to_one_pipeline_is_invisible_to_another(tmp_path, retriever):
@@ -813,3 +843,82 @@ def test_T_R10_7_search_honours_its_own_bounds_and_reports_real_scores(tmp_path,
     assert all(hit["score"] >= floor - 1e-4 for hit in filtered["results"]), filtered
     assert len(filtered["results"]) < len(body["results"]), (
         "min_score is passed to the retriever, not ignored")
+
+
+def test_T_R11_3_the_first_ticket_does_not_deadlock_on_the_lazy_build_lock(tmp_path, retriever):
+    """R11, found by running a real container: `/health` fine, POST never returning.
+
+    R10 put one lock over both lazy builds, to stop two first requests each building the Chroma
+    index against the same path. But `pipeline` takes the lock and then reads `self.retriever`,
+    which takes it again — and `threading.Lock` is not reentrant, so the first ticket blocked for
+    ever with no error, no traceback and no log line. The container looked healthy throughout,
+    because `/health` deliberately takes no lock.
+
+    This builds both lazily, through the real `_State`, with a timeout: a deadlock fails it
+    instead of hanging the suite.
+    """
+    import threading
+
+    import ticketing_agent.api as module
+
+    built: list[str] = []
+
+    def fake_build(settings_arg, retriever_arg):
+        built.append("pipeline")
+        return FakePipeline()
+
+    state = module._State(settings(tmp_path), retriever, None)
+    original = module._build_pipeline
+    module._build_pipeline = fake_build
+    try:
+        done = threading.Event()
+
+        def resolve():
+            # The nesting that deadlocked: `pipeline` -> lock -> `retriever` -> lock.
+            state.pipeline  # noqa: B018
+            done.set()
+
+        worker = threading.Thread(target=resolve, daemon=True)
+        worker.start()
+        assert done.wait(timeout=30), (
+            "the first ticket deadlocked on the lazy-build lock: `pipeline` holds it and "
+            "`retriever` wants it, so the lock has to be reentrant")
+    finally:
+        module._build_pipeline = original
+
+    assert built == ["pipeline"], built
+    assert state.pipeline_state == "ready"
+
+
+def test_T_R11_4_concurrent_first_requests_build_the_index_once(tmp_path, retriever):
+    """And the property the lock exists for, which the RLock must not give up."""
+    import threading
+
+    import ticketing_agent.api as module
+
+    calls: list[int] = []
+
+    def counting_build(settings_arg, retriever_arg):
+        calls.append(1)
+        return FakePipeline()
+
+    state = module._State(settings(tmp_path), retriever, None)
+    original = module._build_pipeline
+    module._build_pipeline = counting_build
+    try:
+        barrier = threading.Barrier(4)
+
+        def resolve():
+            barrier.wait(timeout=10)
+            state.pipeline  # noqa: B018
+
+        threads = [threading.Thread(target=resolve, daemon=True) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+            assert not thread.is_alive(), "a build deadlocked or never finished"
+    finally:
+        module._build_pipeline = original
+
+    assert len(calls) == 1, f"four concurrent first requests built the pipeline {len(calls)} times"

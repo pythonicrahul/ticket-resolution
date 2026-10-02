@@ -228,3 +228,98 @@ def test_T_R10_9_the_evaluation_inputs_do_not_ship_in_the_image():
         "file can be dropped in and named with --input rather than editing compose")
     assert any(v.startswith("./data:") and v.endswith(":ro")
                for v in SERVICES["gate"]["volumes"]), "read-only: a run must not alter its input"
+
+
+def test_T_R11_1_the_image_does_not_inherit_the_hosts_file_modes():
+    """R11, found by building the image for the first time: nothing in it was readable.
+
+    `COPY` preserves the host's modes and the container runs as a non-root user, so a file the
+    author happens to own at 0600 is unreadable inside the image. The first real build showed
+    **all four data files and nine of the ten prompts** as `-rw------- root root`: `/search`
+    could not read `documentation.json`, every model call would have raised `PromptError`, and
+    `docker compose run --rm train` died with "Permission denied: development_tickets.json".
+
+    The documented Docker path had never worked, and the suite could not see it because the
+    suite does not build an image. This is the static guard; the evidence is in D-80.
+    """
+    dockerfile = (ROOT / "Dockerfile").read_text("utf-8")
+    normalise = [ln for ln in dockerfile.splitlines()
+                 if ln.startswith("RUN chmod") and "a+rX" in ln]
+    assert normalise, (
+        "the image must normalise file modes after COPY, or a 0600 file on the author's machine "
+        "is a 0600 file for the non-root user in the image")
+    line = normalise[0]
+
+    # Every directory the image copies has to be covered, or the next one added silently is not.
+    copied = {ln.split()[1].rstrip("/") for ln in dockerfile.splitlines()
+              if ln.startswith("COPY ") and not ln.startswith("COPY --from")
+              and ln.split()[1].endswith("/")}
+    for directory in copied:
+        assert f"/app/{directory}" in line, (
+            f"the image copies {directory}/ and does not make it readable: {line}")
+
+    # And it happens while still root, before USER.
+    assert dockerfile.index("RUN chmod") < dockerfile.index("USER support"), (
+        "chmod must run before dropping privileges")
+
+
+def _run_commands(dockerfile: str) -> list[str]:
+    """Each `RUN` instruction as one string, continuations joined and comments dropped.
+
+    Comments matter here: the Dockerfile explains this volume's ownership in prose that names
+    the very path the assertions look for, so a check over the raw text passes on a Dockerfile
+    that does nothing.
+    """
+    lines = [ln for ln in dockerfile.splitlines() if not ln.lstrip().startswith("#")]
+    joined = "\n".join(lines).replace("\\\n", " ")
+    return [line for line in joined.splitlines() if line.startswith("RUN ")]
+
+
+def test_T_R11_5_every_named_volume_path_is_created_and_owned_in_the_image():
+    """R11: the volume added to stop a re-download stopped the system instead.
+
+    Docker seeds a new named volume from the image's directory at that path, **ownership
+    included** — and creates it root-owned when the path does not exist in the image. The
+    container runs as uid 10001, so mounting `model-cache:/home/support/.cache` over a path the
+    Dockerfile never created made the embedder fail with
+    `RetrievalError: ... Permission denied: '/home/support/.cache/chroma'` and every ticket 503.
+
+    So: any named volume mounted into a service built from this image needs its path created and
+    chowned in the Dockerfile. Derived from the compose file, so a new volume cannot miss it.
+    """
+    dockerfile = (ROOT / "Dockerfile").read_text("utf-8")
+    declared = set(COMPOSE.get("volumes") or {})
+
+    for name, service in SERVICES.items():
+        if "build" not in service:
+            continue
+        for mount in service.get("volumes") or []:
+            host, _, rest = mount.partition(":")
+            if host not in declared:
+                continue  # a bind mount: the host owns it, not the image
+            container_path = rest.split(":")[0]
+            assert container_path in dockerfile, (
+                f"{name} mounts the named volume {host!r} at {container_path}, which the "
+                f"Dockerfile never creates — Docker will create it root-owned and the non-root "
+                f"user will not be able to write to it")
+            # Split on the `USER` *instruction*, not the bare word: the file mentions "USER" in
+            # a comment above the chown, so splitting on the word cut it at the wrong place and
+            # the assertion failed on a correct Dockerfile.
+            before_user = dockerfile.split("\nUSER ")[0]
+            # Instructions only. The path is named in two comments here, which satisfied an
+            # earlier version of this assertion whether or not any command touched it.
+            # Per **clause**, not per RUN block: `mkdir` and `chown` sit in one `RUN ... && ...`,
+            # so a block-level check saw the path from the mkdir and passed even when the chown
+            # had dropped it — which is the defect itself. Three versions of this assertion
+            # could not tell the two apart before it was split this finely.
+            clauses = [clause for block in _run_commands(before_user)
+                       for clause in block.split("&&")]
+            made = [clause for clause in clauses if "mkdir" in clause]
+            chowned = [clause for clause in clauses if "chown" in clause]
+            assert any(container_path in block for block in made), (
+                f"{container_path} must be created in the image before the USER instruction: "
+                f"Docker seeds a named volume from the image directory, and creates it "
+                f"root-owned when there is no directory to seed from")
+            assert any(container_path in block for block in chowned), (
+                f"{container_path} is created but never chowned, so the non-root user cannot "
+                f"write to the volume mounted there")

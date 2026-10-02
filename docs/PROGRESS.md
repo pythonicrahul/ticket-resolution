@@ -2149,3 +2149,104 @@ on an unauthenticated endpoint that spends provider credit per call; and `promet
 dependency imported nowhere — the same dead-configuration shape as D-74's `JUDGE_MODEL_NAME`.
 
 `uv run pytest -q` → **671 passed**. `uv run ruff check .` → clean. `docker compose config` → valid.
+
+## Review row R11 · A documented path nobody had ever run (NFR-09, A1)
+
+Row 18 said it plainly: *"the image has never been built and the stack has never been started"*, and
+predicted that *"anything else will surface on the first real `docker compose up`"*. The row offered two
+honest outcomes — build it once, or delete it from the README. I built it, and ran a ticket through the
+endpoint the README documents, end to end, on a clean volume.
+
+**Seven defects. Every one of them broke the documented path completely, and not one was visible to 671
+passing tests, because the suite does not build an image.** Five were mine, four of those shipped by R10
+hours earlier.
+
+**Files changed.** `Dockerfile`, `docker-compose.yml`, `src/ticketing_agent/api.py`, `README.md`,
+`tests/test_ops_stack.py`, `tests/test_fr04_api.py`, `tests/test_docs_consistency.py`. D-80.
+
+**Tests added (7).** `test_T_R11_1` (image file modes, derived from the `COPY` lines),
+`test_T_R11_5` (every named volume path created *and* owned in the image), `test_T_R11_3` (the first
+ticket does not deadlock), `test_T_R11_4` (concurrent first requests build the index once),
+`test_T_R10_3b` (`/health` reports a missing classifier without loading anything), `test_T_R11_1` and
+`test_T_R11_2` in the docs-consistency file (the README's volumes and its cold-start claim).
+**678 passing.**
+
+### Not mine: the image was unreadable, and the one artefact `train` makes was unwritable
+
+`COPY` preserves the host's file modes. The author's `data/` is `-rw-------`, so inside the image those
+files were `-rw------- root root` while the container runs as uid 10001. **All four data files and nine of
+the ten prompts were denied.** `/search` could not read the corpus, every model call would have raised
+`PromptError`, and `docker compose run --rm train` died with `Permission denied:
+development_tickets.json` — which is how I found it. `RUN chmod -R a+rX` over the copied directories,
+before `USER`.
+
+`scripts/train_classifier.py` writes `evaluation/reports/classifier_calibration.md` — the out-of-fold
+measurement R8 identifies as the only figures that bear on NFR-03. That directory was neither created nor
+chowned in the image, and compose had no mount for it, so the report could not be written and would have
+been discarded with the container if it could. Both fixed. Details in **D-80**.
+
+### Mine: four defects I shipped in R10, found by running the thing
+
+* **`threading.Lock` where a reentrant one was needed.** `pipeline` takes the lock, then reads
+  `self.retriever`, which takes it again. The very first ticket deadlocks — for ever, no error, no log
+  line. `/health` kept answering 200 the whole time, which is exactly how it presents: a container Docker
+  calls healthy that cannot answer a ticket. A unit test now holds it.
+* **`/health` built the pipeline as its readiness probe.** R10's finding was that `/health` must not touch
+  the lazy retriever, because the HEALTHCHECK gets five seconds. My fix obeyed the letter and inverted the
+  spirit: it loaded the classifier, built the index and downloaded a 79MB model. It now `stat`s three
+  configured paths and reports `pipeline: not built` honestly.
+* **The sqlite viewer still mounted the *named* `storage` volume** after R10 moved `storage` to a bind
+  mount for FR-16. The audit window would have shown an empty database, with no error.
+* **The `model-cache` volume I added in this row broke the embedder outright.** Docker creates a named
+  volume mounted over a path absent from the image as **root-owned**, so uid 10001 got
+  `RetrievalError: ... Permission denied: '/home/support/.cache/chroma'` and every ticket 503'd. Fixed by
+  creating and chowning the directory in the image, which is what Docker seeds the volume from. This is
+  the second time in two rows that a fix of mine had the same shape as the bug it fixed.
+
+The cache volume exists because `docker compose run --rm train` fetched all 79MB and `--rm` threw it away:
+every training run and every gate run would have re-downloaded it. Nothing on the host needs to read it,
+so a named volume is right.
+
+### Verified, by running it
+
+Rebuilt image, `docker volume rm` first so the model cache was cold, and the whole sequence passed:
+
+```
+PASS  image built
+PASS  docker compose run --rm train trained inside the container
+PASS  classifier.joblib and classifier_calibration.md are on the host (bind mounts work)
+PASS  /health answered 200: {"ok":true,"problems":[],"pipeline":"not built","documents_indexed":0,...}
+PASS  POST /tickets returned a decision: auto_respond, intent=rollback_request, urgency=high
+PASS  an answered ticket carries the reply, an escalated one does not
+PASS  the row is in storage/decisions.db on the host
+PASS  touch storage/KILL_SWITCH is seen inside the container (FR-16, no exec needed)
+PASS  /metrics/prometheus exported 8 metric types at the path Prometheus is configured to scrape
+```
+
+Three earlier runs of that same script are what produced the findings above: run 1 died in `train` on the
+file modes, run 2 503'd every ticket on the cache volume, run 3 hung on the lock with `/health` green.
+
+### What the README now says, and what it deliberately does not
+
+It said `storage/` was a named volume and told the operator to `docker compose exec api touch
+/app/storage/KILL_SWITCH`. Both were false after R10. It now documents the bind mount and
+`touch storage/KILL_SWITCH`, says the first run is slow and why, and says that `/health` passes while the
+container is still warming up. It does **not** say the Docker path is supported or maintained: it is
+verified **as of this row**, by the steps above, and re-verifying it means running them again. A static
+guard cannot replace a build, which is why the row asked for one.
+
+Two things recorded rather than fixed. **`:8080` and `:3000` have no authentication** and are published on
+all interfaces — the viewer serves the whole decision log including `reply_text`, the exact text sent to
+customers, and Grafana runs as an anonymous admin. The README now warns in a blockquote; the deployment
+decision is the author's, and it is queued for **R13**. And `tests/test_ops_stack.py` still cannot build an
+image in CI, which has no Docker; `T-R11-1` and `T-R11-5` parse the Dockerfile instead and derive what they
+check from its own `COPY` and `volumes:` lines, so a new directory cannot silently miss the guard.
+
+**My own test-writing, seventh instance of the same fault.** `T-R11-5`'s first three versions could not
+fail: it split the Dockerfile on the bare word `USER`, which also appears in a comment, so the "before
+`USER`" half contained everything. Before that, a version collapsed `mkdir -p` and `chown -R` from one
+`RUN` into a single string and so could not tell "created" from "owned" — the exact distinction the
+defect turned on. Asserting over too coarse a unit, so that two different states look identical, is now
+the only mistake I have made repeatedly in this backlog.
+
+`uv run pytest -q` → **678 passed**. `uv run ruff check .` → clean. `docker compose config` → valid.

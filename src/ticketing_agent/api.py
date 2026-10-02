@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -120,10 +121,14 @@ def build_app(settings: Settings, retriever: Any | None = None,
         5-second timeout must not trigger a Chroma index build) and reports what it found.
         """
         indexed = len(getattr(state.built_retriever, "chunks", ()) or ())
-        pipeline_state = state.pipeline_state
+        problems = state.configuration_problems
         return {
-            "ok": pipeline_state == "ready" and bool(indexed),
-            "pipeline": pipeline_state,
+            # Serving, and configured so a ticket can be handled. Not "has already built the
+            # graph": a container that has served no ticket is healthy, and one with no
+            # classifier is not, however many tickets it has served.
+            "ok": not problems,
+            "problems": problems,
+            "pipeline": state.pipeline_state,
             "documents_indexed": indexed,
             "model": settings.model_name or None,
             "kill_switch": settings.kill_switch_on,
@@ -349,7 +354,13 @@ class _State:
         # R10 review: two concurrent first requests each built the whole Chroma index against
         # the same `CHROMA_PATH` and each loaded the classifier, last writer winning. One lock
         # over both lazy builds; the work happens once and the loser waits for it.
-        self._lock = threading.Lock()
+        #
+        # **Reentrant, and that is not a detail.** `pipeline` takes this lock and then reads
+        # `self.retriever`, which takes it again — with a plain `Lock` the very first ticket
+        # deadlocks, for ever, with no error and no log line. I shipped that in R10 and found it
+        # in R11 only by watching a real container serve `/health` happily while a POST never
+        # returned. An `RLock` is the honest primitive for a nested lazy build (D-80).
+        self._lock = threading.RLock()
 
     @property
     def retriever(self) -> Any:
@@ -380,18 +391,40 @@ class _State:
 
     @property
     def pipeline_state(self) -> str:
-        """`ready`, `not built` or `unavailable` — what `/health` can honestly claim.
+        """`ready` or `not built` — **without building anything**.
 
-        Probing costs nothing after the first request and is the difference between a container
-        Docker calls healthy and one that can answer a ticket.
+        The R10 review said `/health` must not read the lazy retriever property, because the
+        Dockerfile gives the HEALTHCHECK five seconds and a Chroma index build does not fit in
+        them. My first fix obeyed the letter of that and broke the spirit: it *built the
+        pipeline* as a readiness probe, which loads the classifier, builds the index and
+        downloads a 79MB embedding model on a cold container. Running the stack showed `/health`
+        simply never answering.
+
+        So it answers from what exists. `not built` is an honest state — a container that has
+        served no ticket yet has no graph — and `missing` on a configured path is the condition
+        that made `ok: true` a lie before (D-78, D-80).
         """
-        if self._pipeline is not None:
-            return "ready"
-        try:
-            self.pipeline  # noqa: B018 - building it is the probe
-        except Exception:  # noqa: BLE001 - every failure means the same thing to a caller
-            return "unavailable"
-        return "ready"
+        return "ready" if self._pipeline is not None else "not built"
+
+    @property
+    def configuration_problems(self) -> list[str]:
+        """Which configured inputs are absent, checked by looking rather than by loading.
+
+        Cheap enough for a five-second HEALTHCHECK: `stat` on three paths. This is what makes
+        `ok` meaningful without making it expensive — `docker compose up` before
+        `docker compose run --rm train` reports the missing classifier instead of claiming
+        health and then 503ing every ticket.
+        """
+        problems = []
+        for field, label in (("classifier_path", "classifier"), ("docs_path", "documentation")):
+            configured = getattr(self._settings, field, None)
+            if configured is None:
+                problems.append(f"{label}: not configured")
+            elif not Path(configured).exists():
+                problems.append(f"{label}: no file at the configured path")
+        if not (self._settings.model_name or "").strip():
+            problems.append("model: MODEL_NAME is not set")
+        return problems
 
     def attach(self, log: DecisionLog) -> None:
         """Give the graph the log, so a guardrail block is recorded here too (FR-13 §3.1).

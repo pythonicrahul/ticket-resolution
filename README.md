@@ -178,6 +178,13 @@ onwards; every ticket then escalates with that reason recorded. Delete the file 
 | Prometheus | <http://localhost:9090> | what it scraped |
 | Grafana | <http://localhost:3000> | the dashboard in `ops/`, already provisioned |
 
+**The first run is slow, and only the first.** The embedding model (all-MiniLM-L6-v2, 79 MB) is
+downloaded on first use and the Chroma index is built on the first request, so a cold `train` or a
+cold first ticket takes minutes rather than seconds. Both land in volumes, so it happens once per
+machine and not once per run — it was once per run until review row R11 gave the model cache a
+volume (D-80). `/health` deliberately does **not** trigger either, so Docker's healthcheck passes
+while the container is still warming up; it reports `pipeline: not built` until the first ticket.
+
 Two one-off jobs sit behind a profile, so `up` never starts a training run or an evaluation by
 surprise:
 
@@ -187,14 +194,26 @@ docker compose run --rm gate     # a full unattended run; the report lands in ./
 ```
 
 Your `.env` is read at run time and excluded from the build context, so no key is ever baked into
-an image. `storage/` is a named volume shared by the services that need it, which is why the log
-the API writes is the log the viewer shows — and why `touch`ing the kill switch works from the
-host:
+an image. `storage/` is a **bind mount** on this repository's own `storage/` directory, shared by
+the services that need it — which is why the log the API writes is the log the viewer shows, and
+why FR-16's kill switch works from the host with no `exec` at all:
 
 ```
-docker compose exec api touch /app/storage/KILL_SWITCH   # every ticket now escalates (FR-16)
-docker compose exec api rm    /app/storage/KILL_SWITCH   # and back
+touch storage/KILL_SWITCH   # every ticket now escalates, from the next one onwards (FR-16)
+rm    storage/KILL_SWITCH   # and back
 ```
+
+It was a *named* volume until review row R11. A named volume lives inside Docker's own storage
+area — inside the VM on macOS — so the host cannot reach it, and an emergency control an operator
+cannot operate is not one. The evaluation inputs are **not** in the image: the agents' own answer
+file must not ship to a serving container (FR-04 §3.1), so `gate` mounts `./data` read-only, which
+also means a file nobody has seen can be dropped in and named with `--input`.
+
+> **The three windows have no authentication.** `:8080` serves the entire decision log — including
+> the exact text sent to customers — and `:3000` runs Grafana as an anonymous admin, both published
+> on all interfaces. That is fine on a laptop and is not fine anywhere else; putting this stack on a
+> reachable host needs a password or a bound interface first. The API itself is unauthenticated too
+> (FR-04 §7, and an agent UI is out of scope in the PRD).
 
 `tests/test_ops_stack.py` checks the stack against the application: that Prometheus scrapes a path
 the API serves, that the viewer is read-only and points at the real log, that every mounted file

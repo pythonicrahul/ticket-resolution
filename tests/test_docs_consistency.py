@@ -264,3 +264,47 @@ def test_T_R12_1_nothing_the_documents_promise_is_itself_git_ignored():
     assert "!evaluation/results/kept-*/" in ignore
     assert ".archify/" in ignore, "archify working directories are not a deliverable"
     assert ".DS_Store" in ignore
+
+
+def test_T_R11_1_the_readme_describes_the_volumes_the_compose_file_actually_uses(readme: str):
+    """R11/R10: the README described a named volume and told the operator to `exec` in.
+
+    FR-16's kill switch has to be reachable from the host, and a named volume lives inside
+    Docker's own storage area where it is not. Both the compose file and the test that guards
+    it moved to a bind mount; the README said the opposite, and the instruction it gave
+    (`docker compose exec api touch …`) is the one that proves the control was unreachable.
+    """
+    import yaml
+
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    api_mounts = compose["services"]["api"]["volumes"]
+    assert any(v.startswith("./storage:") for v in api_mounts), api_mounts
+    assert "storage" not in (compose.get("volumes") or {}), (
+        "the named volume is gone, so nothing may still describe one")
+
+    docker = readme[readme.index("## Run it with Docker"):]
+    assert "bind mount" in docker
+    assert "named volume" in docker, "and says what it used to be, and why that was wrong"
+    assert "touch storage/KILL_SWITCH" in docker, (
+        "the host command, not `docker compose exec api touch`")
+    assert "exec api touch" not in docker
+
+    # R10's unrecorded exposure: the two windows with no password.
+    assert "no authentication" in docker
+    assert ":8080" in docker and ":3000" in docker
+
+
+def test_T_R11_2_the_readme_is_honest_about_the_cold_start(readme: str):
+    """R11: the first containerised run takes minutes, and the README promised nothing about it.
+
+    The 79 MB embedding model downloads on first use and the index builds on the first request.
+    Both are volumes now, so the cost is once per machine — it was once per *run* until this row
+    gave the model cache a volume. And `/health` must not trigger either, or Docker's five-second
+    healthcheck can never pass: that is the defect my own first fix introduced.
+    """
+    docker = readme[readme.index("## Run it with Docker"):]
+    assert "79 MB" in docker or "79MB" in docker, "the download is the reason it is slow"
+    assert "first" in docker.lower()
+    assert "pipeline: not built" in docker, (
+        "a reader needs to know an unbuilt graph is a healthy state, not a fault")
+    assert "does **not** trigger" in docker or "does not trigger" in docker

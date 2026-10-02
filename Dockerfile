@@ -26,10 +26,31 @@ COPY prompts/ ./prompts/
 COPY data/ ./data/
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 
+# `COPY` preserves the host's file modes, and the container runs as a non-root user — so a file
+# the author happens to own at 0600 is unreadable inside the image. Review row R11 built this
+# image for the first time and found that **all four data files and nine of the ten prompts**
+# were `-rw------- root root`: `/search` could not read `documentation.json`, every model call
+# would have raised `PromptError`, and training died with "Permission denied". The documented
+# Docker path had never worked, and nothing in the suite could see it because the suite does not
+# build an image.
+#
+# `a+rX` adds read for everyone and execute only where it already applies, so directories stay
+# traversable and nothing becomes newly executable. It runs before `USER`, while we are still
+# root (R11, D-80).
+RUN chmod -R a+rX /app/src /app/evaluation /app/scripts /app/prompts /app/data
+
 # Not root: the container writes only to /app/storage, which is a volume.
+# `/home/support/.cache` is created and chowned **here**, not left to Docker. A named volume
+# mounted over a path that does not exist in the image is created root-owned, and this container
+# runs as uid 10001 — so the model cache volume added in R11 to stop the 79MB re-download broke
+# the embedder outright: `RetrievalError: ... Permission denied: '/home/support/.cache/chroma'`,
+# every ticket 503ing. Docker seeds a new named volume from the image directory, ownership
+# included, so creating it here is what makes the volume writable (D-80).
 RUN useradd --create-home --uid 10001 support \
-    && mkdir -p /app/storage /app/evaluation/results \
-    && chown -R support:support /app/storage /app/evaluation/results
+    && mkdir -p /app/storage /app/evaluation/results /app/evaluation/reports \
+                /home/support/.cache \
+    && chown -R support:support /app/storage /app/evaluation/results /app/evaluation/reports \
+                               /home/support/.cache
 USER support
 
 ENV PATH="/app/.venv/bin:$PATH"

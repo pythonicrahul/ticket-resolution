@@ -1718,3 +1718,46 @@ deleting `COPY prompts/` left the suite green and produced an image where every 
 compose's **list** form — `["LLM_API_KEY=sk-live-…"]` sailed past the guard that exists to stop exactly
 that. Both are tested from what the code actually reads now (`T-R10-8`, `T-R10-9`), and the key guard
 handles both forms with the helper itself under test.
+
+## D-80 · The Docker path had never worked, and two total breakages were waiting in it (NFR-09, A1)
+
+`docs/PROGRESS.md` row 18 said plainly: *"the image has never been built and the stack has never been
+started"*, and predicted that *"anything else will surface on the first real `docker compose up`"*. Review
+row R11 did that build. Two independent defects, each of which broke the documented path completely, and
+**neither was visible to the test suite, because the suite does not build an image.**
+
+**1. Nothing in the image was readable.** `COPY` preserves the host's file modes and the container runs as
+`USER support` (uid 10001). The author's `data/` files are `-rw-------`, owner-only, so inside the image
+they were `-rw------- root root`. Measured on the first build:
+
+| path | as uid 10001 |
+|---|---|
+| `/app/data/documentation.json` | **DENIED** |
+| `/app/data/development_tickets.json` | **DENIED** |
+| `/app/prompts/build/PR-01_answer_draft_v1.0.md` | **DENIED** |
+
+All four data files and **nine of the ten prompts**. So `/search` could not read the corpus (every search a
+503), every model call would have raised `PromptError`, and `docker compose run --rm train` died with
+`Permission denied: development_tickets.json`. Fixed with `RUN chmod -R a+rX` over every copied directory,
+before `USER` drops privileges — `a+rX` adds read for everyone and execute only where it already applies,
+so directories stay traversable and nothing becomes newly executable.
+
+**2. The one artefact `train` produces could not be written, and would have been lost anyway.** The
+Dockerfile created and chowned `/app/storage` and `/app/evaluation/results` — not
+`/app/evaluation/reports`, which is where `scripts/train_classifier.py` writes
+`classifier_calibration.md`: the out-of-fold measurement R8 identifies as the only figures that bear on
+NFR-03. It raised `PermissionError`, and compose had no mount for that directory either, so even with
+permission the report would have been written inside the container and discarded with it. Both fixed.
+
+**What this says about the guards.** `tests/test_ops_stack.py` checked the compose file against the
+application and found neither, because both live in the gap between "the file says the right thing" and
+"the image works". `T-R11-1` is a static guard that derives the directories needing their modes normalised
+from the `COPY` lines themselves, so a new directory cannot silently miss it — but a static guard is
+strictly weaker than a build, which is why the row asked for a build. The honest position is in the README:
+the Docker path is verified **as of this row**, by the steps listed in the PROGRESS entry, and re-verifying
+it means running them again.
+
+**And one fix of mine caused a third problem.** R10 moved `storage/` from a named volume to a bind mount so
+FR-16's kill switch is reachable from the host. The sqlite viewer still mounted the *named* volume, so after
+that change it would have served an empty database — the audit window showing nothing, with no error. Caught
+by the sibling ops test, which now compares the host path rather than a same-looking name.
