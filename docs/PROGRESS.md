@@ -2250,3 +2250,143 @@ defect turned on. Asserting over too coarse a unit, so that two different states
 the only mistake I have made repeatedly in this backlog.
 
 `uv run pytest -q` → **678 passed**. `uv run ruff check .` → clean. `docker compose config` → valid.
+
+## Review row R13 · CHECKPOINT: a fresh gate run, and the figure that will not hold still (FR-14, A9, A10)
+
+**Status: `HUMAN`.** The row asks for the analysis and names what the author decides: which run the
+gate is signed off on, whether the label or the system is right on each disagreement, and the
+two-assessor review. This entry is the analysis. It does not decide any of those.
+
+**What was run.** Three full passes over the 80 validation tickets, 2026-10-02, on this commit:
+
+| run | input | responses | answered | escalated | blocked | kept as |
+|---|---|---|---|---|---|---|
+| 1 | `data/validation_tickets.json`, `--no-cache` | 138 live, 0 replayed | **42** | 38 | 3 | `evaluation/results/kept-gate-2026-10-02/` |
+| 2 | a renamed copy under a path the repo has never seen | 42 live, 97 replayed | **39** | 41 | 5 | `…-renamed/` |
+| 3 | that same renamed copy again | 0 live, 139 replayed | **39** | 41 | 5 | `…-replay/` |
+
+Comparison report: `evaluation/reports/gate-2026-10-02-checkpoint.md`, regenerable with
+`scripts/gate_checkpoint_report.py` (new, paths as arguments). Review sheet:
+`evaluation/reports/review_sample_2026-10-02.csv`. D-81, D-82.
+
+**Reconciliation, which is the non-negotiable.** All three runs: 80 tickets in, 80 terminal rows,
+80 decisions logged, no missing, extra, duplicated or index-gapped rows, log reconciles `true`. 0
+private-data detections, 0 redactions, 0 citations that do not resolve. Not one ticket was dropped
+in 240 ticket-passes.
+
+**Path independence.** Run 2 was pointed at
+`…/queue-dump-2026-10-02-nobody-has-seen-this.json` and processed all 80 without a change to
+anything. Note for a reader: runs 2 and 3 record that absolute temporary path in their own
+`metrics.json`, so those two `input` fields point at a file that no longer exists — which is what
+an unseen-file run looks like, not a defect.
+
+### The finding: the routing is reproducible from the cache and not from the provider
+
+`CLAUDE.md`: *"Deterministic: temperature 0, cached model responses, same input → same routing."*
+Run 3 replayed run 2 entirely and reproduced it **exactly** — 0 of 80 decisions differed and all 80
+replies were byte-identical. Run 1 against run 2, same commit and same configuration, hours apart:
+**7 of 80 tickets routed differently**, and every one of the seven moved on a reason that reads the
+model's exact words (`no_cited_article`, `ungrounded_draft`).
+
+So the headline answered count has a run-to-run spread of **42 vs 39 on identical input** — 3.8
+points of first-contact resolution. A live run is a sample. Full argument and the per-ticket table
+in **D-81**; it is not a defect in the system or the cache, and no amount of re-running produces a
+single stable live number.
+
+**Against the September run D-57 signed off on**, both answered 42, and **26 tickets are routed
+differently inside that identical total**. It decomposes: 8 are the R7 rules doing exactly what R7
+said (6 `money_decision_required`, 2 `compliance_data_question`), and 13 are the grounding judge now
+passing drafts it failed in September — D-74 made the judge model part of the cache key, which
+orphaned every cached grounding response, so the September figure was replayed from a judge that is
+no longer the configured one. The match at 42 is coincidence.
+
+### The numbers the row asks for, from run 1 (the only one with no replayed response)
+
+* **Volume and outcomes.** 42 answered, 38 escalated, 3 blocked by guardrails (all `grounding`).
+  FCR proxy **52.5%** against a ≥60% target; escalation **47.5%** against ≤30%. Both missed, both
+  on the right side of the baseline (42% and 58%).
+* **Real latency.** Median 4,019 ms, p95 6,641 ms over all tickets; the NFR-01 figure — the
+  automated path — is **p95 5,561 ms against a 3,000 ms target. NFR-01 is missed**, and the report
+  says so and names the cause: two provider round trips per answered ticket, PR-01 to draft and
+  PR-03 to judge, against a hosted model.
+* **Retrieval.** Hit rate 96.2% over the 53 tickets with an expected article. No false-positive
+  counterpart, as the report states.
+* **R6, answered against the labels.** 0 answered where the label says `must_not_auto_respond`.
+  **13** answered where the label says `escalate` (VAL-0004, 0014, 0016, 0022, 0024, 0025, 0034,
+  0038, 0051, 0055, 0060, 0070, 0071), 12 of those same 13 also labelled not answerable from docs,
+  and 1 answered citing no expected article (VAL-0080). The matrix also shows **19 tickets the
+  labels expected answered that this run escalated** — the larger number, and the same question
+  applies to them. R6 measured 15 and 20 on the run it had, before R7's rules landed; the
+  September report predates the section and does not carry those figures at all.
+* **R8, classification by wording.** 100% accuracy over all 80, and that figure is near-duplicate
+  lookup: 77.5% of the run's tickets use wording from the training file. Of the 18 with an unseen
+  body, 14 are paraphrases of a training body at D-39's 0.85 clustering, leaving **4 genuinely
+  novel** (VAL-0003, 0004, 0046, 0073) — a sample that supports nothing either way. The figures
+  that bear on NFR-03 remain the out-of-fold ones in
+  `evaluation/reports/classifier_calibration.md`. Calibration worst gap **3.0 points**, inside
+  NFR-03's 5, over a single populated band.
+* **NFR-06 fairness.** Above the 5-point limit on tier (**35.0**, driven by n=8 enterprise),
+  region (**31.4**, n=7 latin_america) and length (**16.0**, n=9 long_or_complex); within it on
+  fluency (0.1) and channel (4.5). The three that fail are the three with a segment under 10.
+* **Spend.** 180 live provider requests today — 138 in run 1, 42 in run 2, 0 in run 3. The report
+  records request counts and the provider and model names, and **no token counts, so no cost
+  figure can be derived from it**. D-55 amended NFR-07 to "a paid provider within a stated
+  budget"; the budget is therefore checkable only as a call count, which the author may want to
+  note in the declaration.
+
+### Two things found by running it, and fixed here
+
+* **`--help` described the opposite of what `--no-cache` does** — *"Responses are still written"*,
+  false since R5. The cache is what decides which routing a later replay produces, and `--help` is
+  where an operator looks before a timing run. Corrected; `T-R13-1` now asserts the help text and
+  `ProviderClient` **against each other**, and I confirmed it fails on the old string. D-82.
+* **The harness aborted with exit 134 after writing a complete and correct report.** Run 1 printed
+  its summary, then `libc++abi: terminating due to uncaught exception … recursive_mutex lock
+  failed` during interpreter shutdown. The report, the log and the outcomes file were all complete
+  and correct. Not reproduced: runs 2 and 3 and two smaller probes (`--stub-pipeline`, and the full
+  pipeline on two tickets) all exited 0. **Recorded, not fixed** — it is a native-library teardown
+  in the embedder, it is intermittent, and I will not guess at a fix for something I cannot
+  reproduce. It matters because `docker compose run --rm gate` and any `&&` chain read the exit
+  code, and would call that passing run a failure. If the author wants it closed, the row is "the
+  harness must exit 0 when the report is written", and the fix is in process teardown, not in the
+  run.
+
+### My recommendation, which is not a decision
+
+1. **Sign off on run 1**, the live `--no-cache` run, and quote every figure from it **with the ±3
+   ticket spread stated beside the headline**. It is the only one of the three that measures the
+   automated path, it is the only one whose latency is real, and D-81 makes the spread a published
+   property rather than a surprise.
+2. **Treat the 13 + 19 disagreements as a data question first.** Four bodies inside
+   `validation_tickets.json` carry more than one label, and 37 of the 62 validation tickets with an
+   identical-body development twin disagree with that twin. VAL-0024/0075, VAL-0033/0060/0061 and
+   VAL-0012/0034 are label contradictions inside the file the gate is scored against; on those the
+   system cannot be right, because no answer agrees with both copies. The per-ticket lists are in
+   the checkpoint report.
+3. **Do not change a threshold or a rule on the strength of these figures.** Seven tickets move
+   between two runs of the same code; any tuning inside that band is fitting noise, and tuning
+   against individual validation tickets is forbidden anyway.
+
+### Still queued for the author, carried forward
+
+* **Which run the gate is signed off on** (D-57, D-81): run 1 live 42, run 2/3 replayed 39,
+  September replayed 42 — and D-74 orphaned every cached grounding response that the September
+  figure was replayed from.
+* **The label contradictions** above, and R7's specific cases: the dispute rule escalates 6
+  tickets labelled `auto_respond` that are all duplicates of VAL-0072 with the opposite label
+  (D-70); the residency rule escalates VAL-0054 and VAL-0076, VAL-0054 on its canned subject line;
+  VAL-0037 has a development twin labelled the other way (D-72). The rule cannot satisfy both.
+* **NFR-01 is missed**: automated-path p95 5,561 ms against <3 s, cause stated.
+* **NFR-06 is missed on three of five dimensions**, each driven by a segment under 10 tickets.
+* **The unauthenticated `:8080` and `:3000` windows** (R11): the viewer serves the whole decision
+  log including the text sent to customers, Grafana runs as an anonymous admin, both on all
+  interfaces. A deployment decision, not a code defect.
+* **`CLAUDE.md` line 21 still reads "Runtime model is a free tier only"**, which NFR-07 as amended
+  by D-55 contradicts, and which every run above contradicts. Flagged in the PRD revision log
+  rather than edited, because that file is the author's.
+* **No cost figure is derivable from any report** (spend, above).
+* **The exit-134 abort**, if it is to be closed rather than recorded.
+* **R14's author documents** remain untouched: risk register, incident procedure, declaration,
+  kill-switch authorisation, log retention.
+
+`uv run pytest -q` → **679 passed**. `uv run ruff check .` → clean. One test added: `T-R13-1`.

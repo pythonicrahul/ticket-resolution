@@ -4,12 +4,14 @@ Offline: a fake pipeline, the hashing embedder, a temporary decision log and out
 No network, no API key, no model download.
 """
 import json
+import re
 from pathlib import Path
 
 import chromadb
 import pytest
 
 from evaluation.harness import HarnessError, run
+from evaluation.harness import main as harness_main
 from ticketing_agent.config import Settings
 from ticketing_agent.ingest import Ticket, load_tickets
 from ticketing_agent.logging_store import DecisionLog
@@ -1390,6 +1392,52 @@ def test_T_R5_3_the_cli_carries_no_cache_through_to_the_client(tmp_path, monkeyp
     module.main(["--input", str(VALIDATION), "--output", str(tmp_path / "b"), "--limit", "2",
                  "--no-cache"])
     assert seen["read_cache"] is False
+
+
+def test_T_R13_1_the_no_cache_help_describes_what_no_cache_does(tmp_path, capsys):
+    """R13: the flag the gate run is defined by described the opposite of what it does.
+
+    `--help` said *"Responses are still written"* from R5 until R13 read it, while `provider.py`
+    gates `put` on `self._read_cache`, and the report line, `docs/provider_cache.md` and
+    `T_R5_2` all say the cache is left untouched. An operator reading `--help` before a timing
+    run would have believed it was recording — and the cache is what decides which routing a
+    later replay produces, so that is the one thing they were wrong about.
+
+    The behaviour and the help are asserted together in one test, because the defect was the two
+    disagreeing and either alone passes.
+    """
+    from ticketing_agent.provider import FakeTransport, ProviderClient
+
+    config = settings(tmp_path)
+    payload = {"choices": [{"message": {"content": "{}"}}], "model": "test-model",
+               "system_fingerprint": "fp"}
+    args = {"prompt_id": "PR-01", "prompt_version": "v1.0"}
+    message = [{"role": "user", "content": "a question only this test asks"}]
+
+    timing = ProviderClient(config, transport=FakeTransport([payload] * 2), read_cache=False)
+    timing.complete(message, **args)
+    after = ProviderClient(config, transport=FakeTransport([payload] * 2))
+    after.complete(message, **args)
+    records = after.cache_hits == 1
+    assert not records, "--no-cache must leave the cache as it found it (T-R5-2)"
+
+    with pytest.raises(SystemExit):
+        harness_main(["--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    # The usage line names every flag before the descriptions start, so it is the **last**
+    # occurrence that carries the help string.
+    option = help_text[help_text.rindex("--no-cache"):]
+    option = option[:option.rindex("--stub-pipeline")]
+
+    claims_a_write = bool(re.search(r"still written|are written|responses are recorded", option,
+                                    re.IGNORECASE))
+    assert claims_a_write is records, (
+        "--help and ProviderClient disagree about whether a timing run records: "
+        f"help claims a write={claims_a_write}, the client records={records}"
+    )
+    assert "left exactly as it was found" in option, (
+        "and it has to say so positively, not merely omit the false claim"
+    )
 
 
 def test_T_R5_4_the_report_says_whether_reads_were_off(tmp_path, monkeypatch):

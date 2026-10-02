@@ -95,9 +95,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--no-index-rebuild", action="store_true",
                         help="fail rather than build the documentation index")
     parser.add_argument("--no-cache", action="store_true",
-                        help="do not replay recorded provider responses. For a timing run: "
-                             "NFR-01 is about the automated path, and a run served from the "
-                             "cache measures the cache. Responses are still written.")
+                        help="do not replay recorded provider responses, and do not record "
+                             "these ones either: the cache is left exactly as it was found. "
+                             "For a timing run: NFR-01 is about the automated path, and a "
+                             "run served from the cache measures the cache.")
     parser.add_argument("--stub-pipeline", action="store_true",
                         help="run ingest and retrieval only, with no model calls. For exercising "
                              "the run machinery; a gate run must not use it.")

@@ -31,7 +31,7 @@ the top of that file and in .claude/commands/next-feature.md. Stop at any HUMAN,
 | R10 | Independent review of rows 16 and 17 (API, dashboard) | FR-04, FR-05, NFR-05 | R2 | build | DONE |
 | R11 | Build and start the Docker stack once, or remove it from the README | NFR-09, A1 | R9 | build | DONE |
 | R12 | Housekeeping: `.archify/` | — | — | build | DONE |
-| R13 | CHECKPOINT: fresh gate run after R2–R9, and a hand review of the auto-answers that disagree with the labels | FR-14, A9, A10 | R2–R9 | checkpoint | TODO |
+| R13 | CHECKPOINT: fresh gate run after R2–R9, and a hand review of the auto-answers that disagree with the labels | FR-14, A9, A10 | R2–R9 | checkpoint | HUMAN |
 | R14 | Author documents: risk register, incident procedure, declaration, kill-switch authorisation, log retention | Governance §2, §5, §6 | — | author | TODO |
 
 ---

@@ -1761,3 +1761,67 @@ it means running them again.
 FR-16's kill switch is reachable from the host. The sqlite viewer still mounted the *named* volume, so after
 that change it would have served an empty database — the audit window showing nothing, with no error. Caught
 by the sibling ops test, which now compares the host path rather than a same-looking name.
+
+## D-81 · The routing is reproducible from the cache and not from the provider (FR-14, NFR-08, A9)
+
+Review row R13 ran the gate three times on 2026-10-02 and compared all three against the September
+run D-57 signed off on. The comparison is
+`evaluation/reports/gate-2026-10-02-checkpoint.md`, regenerable with
+`scripts/gate_checkpoint_report.py`; the runs themselves are kept under
+`evaluation/results/kept-gate-2026-10-02*/`.
+
+`CLAUDE.md` requires: *"Deterministic: temperature 0, cached model responses, same input → same
+routing."* **That holds exactly, and only, when every response is replayed.**
+
+| comparison | provider responses | tickets routed differently |
+|---|---|---|
+| a renamed copy, then the same file again from the cache it recorded | 42 live, then 0 | **0 of 80**, and all 80 replies byte-identical |
+| the live `--no-cache` run vs the same 80 tickets hours later | 138 live vs 42 live + 97 replayed | **7 of 80** |
+| the live run vs the September recordings | — | **26 of 80** |
+
+The seven are VAL-0022, VAL-0033, VAL-0038, VAL-0039, VAL-0071, VAL-0073, VAL-0078, and **every
+one of them moved on a reason that reads the model's exact words**: `no_cited_article` (the draft
+cited nothing resolvable) or `ungrounded_draft` (the PR-03 judge disagreed with itself). Nothing
+else differed: same commit, same thresholds, same `gpt-4o-mini` and `gpt-4.1-mini`, temperature 0.
+
+**Temperature 0 is not determinism**, and this is the measurement of how much that costs here: the
+gate's headline answered count has a run-to-run spread of 42 vs 39 on identical input, which is
+3.8 points of first-contact resolution. Any single figure quoted from a live run is that figure
+±3 tickets.
+
+The 26 against September decompose cleanly, which is the reassuring half: **8 are the R7 rules
+doing exactly what R7 said they would** — 6 `money_decision_required` and 2
+`compliance_data_question` — and **13 are the grounding judge now passing drafts it failed in
+September** (12 `ungrounded_draft`, 1 `invalid_citation`). D-74 found that `JUDGE_MODEL_NAME` was
+dead configuration and made the judge model part of the cache key, which orphaned every cached
+grounding response. So the September figure was replayed from a judge that is no longer the
+configured one. The aggregate matching at 42 both times is coincidence, not stability.
+
+**What this does not mean.** It is not a defect in the system, and not one in the cache: a run
+whose responses are all replayed reproduces to the byte, which is what `NFR-08`'s reproducibility
+asks for and what the cache exists to provide. It means a *live* run is a sample, not a
+measurement, and the report should be read that way.
+
+**What R13 hands the author.** Which run the gate is signed off on is R13's decision and not mine
+(D-57 said the same thing in September). The three candidates are in the table above. The honest
+options are: sign off on the live `--no-cache` run and quote it with the ±3 spread stated; or sign
+off on a replayed run and state that the figure is reproducible but was not measured live. What is
+not available is a single stable live number, and no amount of re-running will produce one.
+
+## D-82 · `--help` described the opposite of what `--no-cache` does (FR-14, NFR-09)
+
+Found while running the command R13 is defined by. Since R5 the flag's help has ended *"Responses
+are still written."* `provider.py:541` gates the write on `self._read_cache`, so a `--no-cache` run
+records nothing — which is the whole point of the R5 fix, and what the report line,
+`docs/provider_cache.md` and `T_R5_2` all say.
+
+The reason this is worth a decision rather than a typo fix: **the cache is what decides which
+routing a later replay produces** (D-81 measures it at 7 tickets of 80), and `--help` is where an
+operator looks before a timing run. Someone reading it would have believed a timing run was
+recording its responses, and would have expected a later replay to reproduce it. It cannot.
+
+`T-R13-1` asserts the help text and `ProviderClient` against **each other** rather than against a
+fixed string: the behaviour is measured with a real client and a fresh key, the help is read out of
+the parser, and the test fails if either claims something the other does not do. A test over the
+string alone would have passed in September and in R5, because the string was consistent — with
+itself.
