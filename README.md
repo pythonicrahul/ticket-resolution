@@ -2,14 +2,26 @@
 
 A support system for CloudServe Solutions (Forward Deployed AI Engineering capstone). It answers tickets from CloudServe's own documentation when it can defend the answer, with citations, and escalates to a person, with a summary and the relevant articles attached, when it cannot. Every decision is logged.
 
-> Status: built through the backlog in `docs/BACKLOG.md`. Requirements are in `docs/PRD.md`, one spec per requirement in `docs/specs/`, and every non-obvious choice in `docs/decisions.md`.
+> Status: built through the backlog in `docs/BACKLOG.md` and the review backlog in `docs/REVIEW_BACKLOG.md`. Requirements are in `docs/PRD.md`, one spec per requirement in `docs/specs/`, and every non-obvious choice in `docs/decisions.md`.
 >
-> **Start here for how it works:** [`docs/Implementation.md`](docs/Implementation.md) — the full technical account, with a diagram and a captured request/response for every API use case. Rendered as a single page in [`docs/Implementation.html`](docs/Implementation.html).
+> **How it works:** [`docs/Implementation.md`](docs/Implementation.md) (rendered: [`docs/Implementation.html`](docs/Implementation.html)). **How to demo it:** [`demo/README.md`](demo/README.md).
+
+## What you need
+
+| | |
+|---|---|
+| OS | macOS or Linux (Windows through WSL) |
+| Tools | `git`, `curl`, and [uv](https://docs.astral.sh/uv/), which installs Python 3.14 for you |
+| An API key | an OpenAI key (see step 3 for why, and for the free alternative) |
+| Network | the first run downloads Python, the packages and the ~80 MB embedding model; after that, search and classification run locally |
+| Disk | about 2 GB |
 
 ## Setup (from a clean checkout)
 
-1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or see https://docs.astral.sh/uv/).
-2. Install dependencies: `uv sync`
+Run every command from the repository root.
+
+1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or see https://docs.astral.sh/uv/). Open a new terminal afterwards so `uv` is on your `PATH`.
+2. Install dependencies: `uv sync` (creates `.venv` and installs Python 3.14 if you don't have it).
 3. Configure: `cp .env.example .env`, then set `LLM_API_KEY`. **The default provider is OpenAI**:
 
    ```
@@ -42,19 +54,74 @@ A support system for CloudServe Solutions (Forward Deployed AI Engineering capst
    setup error, not a silent fallback.
 5. Check: `uv run pytest -v` — the full suite runs with no network and no API key. (No count is quoted here on purpose: it goes stale the next time a test is added.)
 
-No uv? `python3.14 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && pip install -e .`
+No uv? `python3.14 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && pip install -e .`, then use `python` wherever this file says `uv run python`.
 
-## Run
+## Run it
 
-| What | Command |
+| What | Command | Result |
+|---|---|---|
+| The API | `uv run uvicorn ticketing_agent.api:app` | <http://127.0.0.1:8000/docs> |
+| Full unattended evaluation (the gate) | `uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/` | `metrics.md`, `metrics.json`, `outcomes.jsonl` in the output directory |
+| The same, with no model calls | add `--stub-pipeline` (ingest and retrieval only; for exercising the machinery) | |
+| The scripted demo | `demo/demo.sh` (with the API running) | one case per Enter key; see `demo/README.md` |
+| Tests | `uv run pytest -v` | |
+| Lint | `uv run ruff check .` | |
+
+### 1. The API
+
+```bash
+uv run uvicorn ticketing_agent.api:app
+```
+
+Open <http://127.0.0.1:8000/docs> for an interactive page where you can try every endpoint, or use `curl`:
+
+```bash
+# what the service is enforcing (thresholds, kill switch)
+curl -s http://127.0.0.1:8000/health
+
+# search the documentation the way an agent would
+curl -s -G http://127.0.0.1:8000/search --data-urlencode "q=my deployment keeps dying" --data-urlencode "k=3"
+
+# submit a ticket (ready-made tickets for every case are in demo/payloads/)
+curl -s -X POST http://127.0.0.1:8000/tickets \
+  -H 'Content-Type: application/json' -d @demo/payloads/01_answered_email_deploy.json
+
+# what is waiting for a person, most urgent first
+curl -s http://127.0.0.1:8000/queue
+
+# counts computed from the decision log; Prometheus format at /metrics/prometheus
+curl -s http://127.0.0.1:8000/metrics
+```
+
+| Endpoint | Purpose |
 |---|---|
-| Full unattended evaluation (the gate) | `uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/` |
-| The same, with no model calls | add `--stub-pipeline` (ingest and retrieval only; for exercising the machinery) |
-| API | `uv run uvicorn ticketing_agent.api:app` |
-| Tests | `uv run pytest -v` |
+| `GET /health` | thresholds in force, kill-switch state, whether the index and classifier are loaded |
+| `GET /search?q=…&k=…` | ranked documentation passages for an agent (FR-04) |
+| `POST /tickets` | one ticket through the full pipeline: `auto_respond` with a cited reply, or `escalate` with a handover summary |
+| `GET /queue` | escalated tickets, ordered by urgency then age (FR-05) |
+| `GET /metrics`, `GET /metrics/prometheus` | operational figures, from the decision log |
+
+The first request after start-up builds the search index and loads the classifier, so it is slower than the rest.
+To keep a separate decision log (for a demo, say), start the API with `DECISION_LOG_PATH=./storage/demo.db uv run uvicorn ticketing_agent.api:app`; a variable set on the command line wins over `.env`.
+
+### 2. The unattended evaluation run
+
+```bash
+uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/
+```
 
 The harness accepts any ticket file with the documented schema: point `--input` at it. No data file
-name is hardcoded anywhere.
+name is hardcoded anywhere. It processes every ticket even if some fail, writes every decision to the
+log, checks that the log reconciles with the tickets processed, and writes:
+
+| File | What it holds |
+|---|---|
+| `metrics.md` | the human report: volume, business outcomes, technical and governance figures, segment tables, and what the run does not measure |
+| `metrics.json` | the same figures, machine-readable |
+| `outcomes.jsonl` | one line per ticket: the decision, the reason, the exact reply sent or the handover note |
+
+Useful options: `--limit N` (first N tickets), `--run-id NAME`, `--decision-log PATH`, and `--no-cache`
+for a timing run (see Pace).
 
 **Pace.** How many model calls a ticket costs depends on how far it gets, which is NFR-07's point:
 
@@ -86,7 +153,21 @@ use `--no-cache` for timing, which neither reads nor writes the cache (D-68).
 **Stopping it.** `touch storage/KILL_SWITCH` stops every automatic reply from the next ticket
 onwards; every ticket then escalates with that reason recorded. Delete the file to resume (FR-16).
 
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `uv: command not found` | Open a new terminal after installing uv, or add `~/.local/bin` to `PATH`. |
+| The harness or API refuses to start: classifier missing | Run step 4 once. |
+| It refuses to start: `LLM_API_KEY` or `MODEL_NAME` missing | Step 3: copy `.env.example` to `.env` and set the key. |
+| Every ticket escalates with `provider_unavailable` | The key is wrong, the network is down, or the provider is throttling. The run still completes; fix the key and run again. |
+| Every ticket escalates with `kill_switch` | A switch file was left behind: `rm storage/KILL_SWITCH`. |
+| The first request is slow | It builds the documentation index and downloads the embedding model once. |
+| A second run is suspiciously fast | It was served from the response cache. That is expected; use `--no-cache` for timings. |
+
 ## Run it with Docker
+
+> **Optional, and not yet verified end to end:** the image has not been built and the stack has not been started (review row R11). The uv path above is the supported way to run the system.
 
 `docker compose up --build` brings up the system and three windows into it:
 
@@ -122,7 +203,16 @@ target permanently down — so the checks are worth having.
 
 ## Repository map
 
-`src/ticketing_agent/` components · `evaluation/` harness and results · `prompts/` versioned prompt library · `docs/` requirements, specs, decisions · `tests/` tests and synthetic fixtures · `data/` pack datasets.
+| Path | What is there |
+|---|---|
+| `src/ticketing_agent/` | the components: ingest, classify, retrieve, route, generate, guardrails, handover, provider, decision log, pipeline, API |
+| `evaluation/` | the unattended harness; run outputs go to `evaluation/results/` (git-ignored) |
+| `prompts/` | the versioned prompt library and its register |
+| `docs/` | requirements, specs, decisions, implementation notes, diagrams, backlogs and progress log |
+| `demo/` | demo payloads, the demo runner, the demo runbook and the video script |
+| `tests/` | the test suite and synthetic fixtures |
+| `data/` | the pack's datasets |
+| `scripts/` | training, sweeps, the review-sample sheet and other one-off tools |
 
 ## Attribution
 

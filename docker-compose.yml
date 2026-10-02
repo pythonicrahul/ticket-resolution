@@ -10,7 +10,7 @@
 #   docker compose run --rm gate         a full unattended evaluation run
 #
 # The key is never baked into an image: `env_file` reads your .env at run time, and .dockerignore
-# excludes it from the build context. `storage/` is a named volume shared by the services that
+# excludes it from the build context. `storage/` is a **bind mount** shared by the services that
 # need it, so the decision log the API writes is the one the viewer shows.
 
 services:
@@ -29,7 +29,7 @@ services:
       KILL_SWITCH_FILE: /app/storage/KILL_SWITCH
     ports: ["8000:8000"]
     volumes:
-      - storage:/app/storage
+      - ./storage:/app/storage
       - ./evaluation/results:/app/evaluation/results
     restart: unless-stopped
 
@@ -43,7 +43,7 @@ services:
       TRAINING_TICKETS_PATH: /app/data/development_tickets.json
       CLASSIFIER_PATH: /app/storage/classifier.joblib
     volumes:
-      - storage:/app/storage
+      - ./storage:/app/storage
     profiles: ["tools"]
     command: ["python", "scripts/train_classifier.py"]
 
@@ -60,8 +60,13 @@ services:
       LLM_CACHE_PATH: /app/storage/llm_cache.sqlite
       KILL_SWITCH_FILE: /app/storage/KILL_SWITCH
     volumes:
-      - storage:/app/storage
+      - ./storage:/app/storage
       - ./evaluation/results:/app/evaluation/results
+      # The evaluation inputs are not in the image (.dockerignore, D-79): the agents' own
+      # answers must not ship to a serving container, and a gate run should be pointed at a file
+      # rather than carry one. Mounting `./data` read-only also means an unseen file can be
+      # dropped in and named with `--input` instead of editing this file.
+      - ./data:/app/data:ro
     profiles: ["tools"]
     command:
       - python
@@ -80,7 +85,10 @@ services:
     environment:
       SQLITE_DATABASE: decisions.db
     volumes:
-      - storage:/data
+      # The same bind mount the api writes to. It was the *named* `storage` volume, so when
+      # the api moved to a bind mount for FR-16's sake (the host cannot touch a named volume)
+      # the viewer would have gone on reading an empty one (R10 review).
+      - ./storage:/data:ro
     ports: ["8080:8080"]
     command: ["sqlite_web", "-H", "0.0.0.0", "-x", "-r", "/data/decisions.db"]
     restart: unless-stopped
@@ -112,6 +120,8 @@ services:
     restart: unless-stopped
 
 volumes:
-  storage:
+  # `storage` is a bind mount on ./storage, not a named volume: FR-16's kill switch has to be
+  # reachable with `touch storage/KILL_SWITCH` from the host, and a named volume lives inside
+  # Docker's own storage area — inside the VM on macOS — where the host cannot reach it.
   prometheus:
   grafana:

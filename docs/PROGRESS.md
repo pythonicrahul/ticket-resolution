@@ -2068,3 +2068,84 @@ present. D-77 records the general rule it enforces: **a document may only point 
 has**; everything else is reproducible from a command, or stated as unavailable.
 
 `uv run pytest -q` → **660 passed**. `uv run ruff check .` → clean.
+
+---
+
+## Review row R10 · The review rows 16 and 17 never got (FR-04, FR-05, NFR-05)
+
+Row 18 recorded that the reviewer session for the API and the dashboard hit a rate limit. Every other row
+had a fresh-session review, and between them they found one severe and thirteen high findings — so this
+code had been read by nobody but its author. R10 is that review, and it found **one severe and seven
+high**.
+
+**Files changed.** `src/ticketing_agent/api.py`, `src/ticketing_agent/pipeline.py`, `docker-compose.yml`,
+`.dockerignore`, `tests/test_fr04_api.py`, `tests/test_ops_stack.py`. D-78, D-79.
+
+**Tests added (11).** `test_T_R10_1`, `_1b`, `_2`, `_3`, `_4`, `_5`, `_6`, `_7`, `_8`, `_9`, plus
+`test_the_env_name_reader_handles_both_compose_forms`. **671 passing.**
+
+### The severe one: two concurrent tickets, one dropped entirely
+
+`api.submit` opened a `DecisionLog` per request and attached it to the **shared** pipeline. `_record`
+reads that log at write time — after a provider round trip, so seconds later — and `DecisionLog` opened
+sqlite without `check_same_thread=False` while `provider.py` passes it. FastAPI runs sync endpoints on a
+threadpool.
+
+Reproduced against a real server: one ticket answered, **the other 500'd with not one row in the
+database** — after being drafted and judged, two paid calls. `DecisionLogUnavailable` is deliberately
+re-raised (D-27), `submit` had no handler, and the terminal row was never written. No sent answer, no
+logged escalation, no audit row, no queue entry. **Two browser tabs on `/docs` would have done it.**
+
+That breaks three non-negotiables simultaneously. And **my first fix had the same shape as the bug**: a
+bare module-level `ContextVar` is visible to every instance, so a log attached to one pipeline could be
+written to by another. The suite caught it in seconds — a later test's fresh pipeline picked up an earlier
+test's closed handle. It is keyed on the pipeline now, and `T-R10-1b` pins it without needing a race,
+because `TestClient` does not reproduce the threading reliably.
+
+### Seven highs
+
+Every exit from `submit` now writes a row first: a malformed body raised a 400 with **no row**, a
+pipeline that could not be built 500'd with no row, and anything raised mid-flight lost the ticket.
+`/health` returned `ok: true` with no classifier — the exact state `docker compose up` leaves before
+`docker compose run --rm train` — and read the lazy retriever property, so the first health check tried to
+build the Chroma index against a five-second HEALTHCHECK timeout.
+
+Three more were tests asserting the wrong thing:
+
+* **`/queue`'s `urgency_reason` could be reverted to `detail` with one word and the suite stayed green** —
+  D-62's whole point, and `docs/specs/FR-08.md` claimed a test for it that only checked the row.
+* **`[:limit]` could move to before the ordering** and nothing noticed, because every queue fixture had
+  2–4 rows against a default limit of 50, so the two orderings were identical. On a real log that hides
+  every urgent ticket beyond row N. **Sixth** time this backlog has hit the same fixture trap.
+* **`test_the_kill_switch_is_reachable_from_the_host` demanded a named volume**, which the host cannot
+  reach — so the test contradicted its own docstring, and making the README true made it fail. Changing
+  it to a bind mount then exposed that the sqlite viewer mounted the named volume and would have read an
+  empty database.
+
+And two guards that could not fire: the dashboard check compared two checked-in files rather than the live
+exporter (so deleting a metric block left a panel permanently empty with the suite green), and the
+no-key check read `"LLM_API_KEY" not in service["environment"]`, which is `True` for compose's list form —
+`["LLM_API_KEY=sk-live-…"]` walked straight past the guard that exists to stop exactly that.
+
+### Recorded as stated limitations, not fixed
+
+**The API is unauthenticated, and `/queue` returns customer-derived text** — handover summaries, and
+`urgency_reason`, which carries CloudServe's historic ticket ids. `/tickets` returns the full outbound
+reply. FR-04 §7 records this and the PRD puts an agent UI and auth out of scope, so it stays, stated.
+
+**The compose stack exposes more than the API does**, and this had not been recorded anywhere: the sqlite
+viewer publishes the whole decision log — including `reply_text`, the exact text sent to customers (D-63)
+— on **0.0.0.0:8080 with no password**, and Grafana runs with anonymous admin and the login form
+disabled. Read-only, but readable by anyone who can reach the host. The compose comment says "anything
+exposed beyond localhost needs a password" while `ports:` publishes on all interfaces. **This belongs in
+front of the author at R13**: it is a deployment decision, not a code defect.
+
+Also recorded and not fixed: `/queue` has no run filter or resolution state, so a `docker compose run
+--rm gate` injects 80 validation tickets into the agents' live queue and a handled escalation never leaves
+it (FR-05 asks for ordering, not a status column); `pipeline.py` writes no `classification` stage row, so
+FR-08 §5 is unmet and dashboard panel 8 can only ever show three of the five stages it names; a duplicate
+`ticket_id` is accepted twice because each request gets a fresh `seen_ids`; there is no request-size limit
+on an unauthenticated endpoint that spends provider credit per call; and `prometheus-client` is a declared
+dependency imported nowhere — the same dead-configuration shape as D-74's `JUDGE_MODEL_NAME`.
+
+`uv run pytest -q` → **671 passed**. `uv run ruff check .` → clean. `docker compose config` → valid.

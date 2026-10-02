@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-010",
+  "channel": "email",
+  "subject": "Question about backup regions",
+  "body": "Are backups replicated outside our primary region? A compliance review has raised this and I need a definite answer.",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Quentin Aziz",
+  "customer_tier": "standard",
+  "customer_region": "asia_pacific",
+  "language_fluency": "fluent"
+}

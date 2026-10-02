@@ -12,6 +12,7 @@ exercised offline. `app` builds the real thing from the environment, which is wh
 from __future__ import annotations
 
 import logging
+import threading
 from collections import Counter
 from typing import Any
 
@@ -109,10 +110,21 @@ def build_app(settings: Settings, retriever: Any | None = None,
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        """What is wired, so a deployment can be checked without submitting a ticket."""
+        """What is wired, so a deployment can be checked without submitting a ticket.
+
+        **A readiness check, not a liveness one** (R10 review). It used to return `ok: true`
+        unconditionally — including with no classifier, which is exactly the state
+        `docker compose up` leaves before `docker compose run --rm train`: Docker marks the
+        container healthy, Prometheus shows zeroes, and every ticket 500s with nothing logged.
+        It now builds nothing itself (the retriever is a lazy property, and a HEALTHCHECK with a
+        5-second timeout must not trigger a Chroma index build) and reports what it found.
+        """
+        indexed = len(getattr(state.built_retriever, "chunks", ()) or ())
+        pipeline_state = state.pipeline_state
         return {
-            "ok": True,
-            "documents_indexed": len(getattr(state.retriever, "chunks", ()) or ()),
+            "ok": pipeline_state == "ready" and bool(indexed),
+            "pipeline": pipeline_state,
+            "documents_indexed": indexed,
             "model": settings.model_name or None,
             "kill_switch": settings.kill_switch_on,
             "thresholds": {"confidence": settings.confidence_threshold,
@@ -140,21 +152,46 @@ def build_app(settings: Settings, retriever: Any | None = None,
 
     @app.post("/tickets", response_model=TicketOut)
     def submit(ticket: TicketIn) -> TicketOut:
-        """One ticket through the same pipeline a harness run uses, and logged the same way."""
+        """One ticket through the same pipeline a harness run uses, and logged the same way.
+
+        **Every exit from this function writes a row first** (R10 review). Three did not:
+
+        * A malformed body raised a 400 with no row at all, while the same ticket through the
+          harness is escalated as `malformed_ticket` with a row — FR-07's criterion is "logged
+          and escalated, not crashed", and this module's own docstring claims there is "no
+          second, looser way in". The 400 is right; having no trace of it was not.
+        * A pipeline that could not be built (no classifier, no index) 500'd with no row.
+        * Anything raised between opening the log and `log.perform` lost the ticket, which is
+          how two concurrent requests dropped one entirely (D-78).
+        """
         entry = ticket.model_dump()
         normalised = normalise_ticket(entry, index=None)
-        if normalised.is_malformed:
-            raise HTTPException(
-                status_code=400,
-                detail=f"the ticket could not be read: {', '.join(normalised.defects)}")
 
         with DecisionLog(settings.decision_log_path, run_id="api") as log:
-            # The log is attached **before** the ticket is processed, not after. Processing first
-            # meant the rows the graph writes as it goes — above all the guardrail `block` row
-            # FR-12 §5 requires — were silently never written for a ticket submitted here, while
-            # the same ticket through the harness recorded them.
-            state.attach(log)
-            outcome = state.pipeline.process(normalised)
+            if normalised.is_malformed:
+                # Logged, then refused. FR-13 logs the decision before the action, and refusing
+                # a ticket is a decision.
+                log.perform(_malformed_outcome(normalised).to_entry(), lambda: None)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"the ticket could not be read: {', '.join(normalised.defects)}")
+            try:
+                # The log is attached **before** the ticket is processed, not after. Processing
+                # first meant the rows the graph writes as it goes — above all the guardrail
+                # `block` row FR-12 §5 requires — were silently never written for a ticket
+                # submitted here, while the same ticket through the harness recorded them.
+                state.attach(log)
+                outcome = state.pipeline.process(normalised)
+            except Exception as exc:  # noqa: BLE001 - one ticket's problem, never a lost ticket
+                _log.exception("handling %s failed", normalised.ticket_id)
+                outcome = _failed_outcome(normalised, exc)
+                log.perform(outcome.to_entry(), lambda: None)
+                raise HTTPException(
+                    status_code=503,
+                    # The type, never the message: a build failure names the classifier path
+                    # and a provider error can echo the request (NFR-04).
+                    detail="the ticket was logged and escalated, but could not be handled: "
+                           f"{type(exc).__name__}") from None
             # FR-13, CLAUDE.md: the row is written before the outcome is returned to the caller.
             log.perform(outcome.to_entry(), lambda: None)
         return TicketOut(
@@ -266,6 +303,42 @@ def _escape(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
 
 
+def _malformed_outcome(ticket: Any) -> Any:
+    """FR-07, FR-09: the row a refused ticket leaves behind (R10 review).
+
+    The same reason and the same explanation the harness writes for the identical ticket, so
+    the two paths agree — this module's docstring claims there is no looser way in, and until
+    this existed there was: a 400 and no trace.
+    """
+    from .pipeline import Outcome
+
+    return Outcome(
+        ticket=ticket, decision="escalate", reason="malformed_ticket",
+        explanation=("This ticket could not be read well enough to answer it, so a person "
+                     "should look at it."),
+        all_reasons=("malformed_ticket",), stage="ingest",
+        detail="ingest defects: " + ", ".join(ticket.defects),
+        summary=f"{ticket.channel} ticket {ticket.ticket_id} could not be read.",
+        uncertainty="The ticket could not be read reliably, so a person looks at it.",
+        requirement_ids=("FR-07", "FR-09", "FR-13"))
+
+
+def _failed_outcome(ticket: Any, exc: BaseException) -> Any:
+    """FR-14 §3.3's contract, at the API: one ticket's failure is never a lost ticket."""
+    from .pipeline import Outcome
+
+    return Outcome(
+        ticket=ticket, decision="escalate", reason="pipeline_error",
+        explanation="Something went wrong while handling this ticket, so it goes to a person.",
+        all_reasons=("pipeline_error",), stage="pipeline",
+        # The type only: a build failure names the classifier path and a provider error can
+        # echo the request (NFR-04).
+        detail=type(exc).__name__,
+        summary=f"{ticket.channel} ticket {ticket.ticket_id}: handling did not complete.",
+        uncertainty="The system could not finish handling this ticket.",
+        requirement_ids=("FR-13", "FR-14"))
+
+
 class _State:
     """The two heavy things, built once and shared: the index and the graph."""
 
@@ -273,20 +346,52 @@ class _State:
         self._settings = settings
         self._retriever = retriever
         self._pipeline = pipeline
+        # R10 review: two concurrent first requests each built the whole Chroma index against
+        # the same `CHROMA_PATH` and each loaded the classifier, last writer winning. One lock
+        # over both lazy builds; the work happens once and the loser waits for it.
+        self._lock = threading.Lock()
 
     @property
     def retriever(self) -> Any:
         if self._retriever is None:
-            one = Retriever(self._settings)
-            one.build_index(self._settings.require_path("docs_path"))
-            self._retriever = one
+            with self._lock:
+                if self._retriever is None:
+                    one = Retriever(self._settings)
+                    one.build_index(self._settings.require_path("docs_path"))
+                    self._retriever = one
         return self._retriever
 
     @property
     def pipeline(self) -> Any:
         if self._pipeline is None:
-            self._pipeline = _build_pipeline(self._settings, self.retriever)
+            with self._lock:
+                if self._pipeline is None:
+                    self._pipeline = _build_pipeline(self._settings, self.retriever)
         return self._pipeline
+
+    @property
+    def built_retriever(self) -> Any:
+        """Whatever has already been built, without building it.
+
+        `/health` used to read `retriever`, the lazy property, so the first health check built
+        the whole index — against a HEALTHCHECK with a five-second timeout (R10 review).
+        """
+        return self._retriever
+
+    @property
+    def pipeline_state(self) -> str:
+        """`ready`, `not built` or `unavailable` — what `/health` can honestly claim.
+
+        Probing costs nothing after the first request and is the difference between a container
+        Docker calls healthy and one that can answer a ticket.
+        """
+        if self._pipeline is not None:
+            return "ready"
+        try:
+            self.pipeline  # noqa: B018 - building it is the probe
+        except Exception:  # noqa: BLE001 - every failure means the same thing to a caller
+            return "unavailable"
+        return "ready"
 
     def attach(self, log: DecisionLog) -> None:
         """Give the graph the log, so a guardrail block is recorded here too (FR-13 §3.1).

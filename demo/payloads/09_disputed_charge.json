@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-009",
+  "channel": "email",
+  "subject": "Question about this month's charges",
+  "body": "There are charges on our invoice for a service I do not believe we use. Could you explain what these relate to?",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Kavya Schmidt",
+  "customer_tier": "business",
+  "customer_region": "north_america",
+  "language_fluency": "fluent"
+}

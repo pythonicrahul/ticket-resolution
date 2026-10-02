@@ -18,6 +18,7 @@ without the components, and it is the honest thing to run if a model is not conf
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -34,6 +35,18 @@ from ticketing_agent.logging_store import (
 from ticketing_agent.retrieve import Passage, RetrievalError
 
 _log = logging.getLogger(__name__)
+
+#: FR-13 §3.1, D-78: the decision log the *current* context writes its intermediate rows to,
+#: and the `id()` of the pipeline it was attached to.
+#:
+#: A `ContextVar` rather than an attribute because one `SupportPipeline` serves every request in
+#: the API while each request owns its own `DecisionLog` — see `SupportPipeline.attach_log`.
+#: **Keyed on the pipeline**, because a module-level variable is visible to every instance: the
+#: first version of this fix let a log attached to one pipeline be written to by another, which
+#: is the same class of mistake it was fixing. The test suite caught it immediately — a later
+#: test's fresh pipeline picked up an earlier test's closed handle.
+_attached_log: ContextVar[tuple[int, Any] | None] = ContextVar("attached_decision_log",
+                                                               default=None)
 
 #: The reason the stub gives while the answering path is unbuilt. A run before row 14 therefore
 #: shows a 100% escalation rate, which is correct and must not be read as a tuning result.
@@ -253,8 +266,9 @@ class SupportPipeline:
         self._guardrails = guardrails
         self._handover = handover_writer
         self._settings = settings
-        self._log = log
         self._warned_no_log = False
+        if log is not None:
+            self.attach_log(log)
         self._graph = self._build()
 
     def attach_log(self, log: Any) -> None:
@@ -262,8 +276,26 @@ class SupportPipeline:
 
         The terminal row is the harness's to write (it owns the latency and the reconciliation);
         the rows *inside* one ticket belong to the component that took the decision.
+
+        **Per context, not per object** (R10 review, D-78). This used to set `self._log`, and the
+        API shares one pipeline across requests: `api.submit` opened a `DecisionLog` of its own
+        and then attached it to the shared object, while `_record` reads the log *at write time*
+        — after a provider round trip, so seconds later. Two overlapping POSTs therefore wrote
+        one ticket's intermediate rows through the other's sqlite handle, which raised
+        (`check_same_thread`), and `DecisionLogUnavailable` is deliberately re-raised (D-27), so
+        the terminal row was never written and **the ticket vanished**: a 500 to the caller and
+        not one row in the database. A `ContextVar` gives each request its own, and leaves the
+        harness — which attaches once and processes serially — behaving exactly as before.
         """
-        self._log = log
+        _attached_log.set((id(self), log))
+
+    @property
+    def _log(self) -> Any:
+        """The log attached to *this* pipeline in *this* context, or None."""
+        attached = _attached_log.get()
+        if attached is None or attached[0] != id(self):
+            return None
+        return attached[1]
 
     # --- the graph ------------------------------------------------------------------
 

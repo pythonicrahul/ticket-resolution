@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-006",
+  "channel": "email",
+  "subject": "Possible account compromise",
+  "body": "A former employee appears to still have access three weeks after leaving. We have found API calls made under their account. This is urgent.",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Maria Okafor",
+  "customer_tier": "enterprise",
+  "customer_region": "north_america",
+  "language_fluency": "fluent"
+}

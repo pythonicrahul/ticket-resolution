@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-005",
+  "channel": "email",
+  "subject": "Webhooks not arriving",
+  "body": "Signature verification fails for every delivery. We are computing the signature exactly as the documentation describes, over the parsed body.",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Farid Silva",
+  "customer_tier": "business",
+  "customer_region": "europe",
+  "language_fluency": "fluent"
+}

@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-001",
+  "channel": "email",
+  "subject": "Deployment rolls back every time",
+  "body": "Our deployment reaches running and then rolls back after about a minute. The logs mention a health check timeout. It runs perfectly on my machine and in staging.",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Nadia Mendez",
+  "customer_tier": "standard",
+  "customer_region": "europe",
+  "language_fluency": "fluent"
+}

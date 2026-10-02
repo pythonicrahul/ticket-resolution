@@ -13,3 +13,11 @@ storage/
 evaluation/results/
 docs/
 tests/
+
+# FR-04 §3.1 singles out the agents' own answers as "never indexed and never returned", and the
+# Dataset Guide says a system that could read them would make the evaluation meaningless. The
+# runtime image has no use for either file — the harness is pointed at a ticket file by argument
+# (`--input`) and the serving container never evaluates — so they stay out of the build context
+# rather than relying on `DOCS_PATH` to keep them out of the index (R10 review, D-79).
+data/ground_truth_responses.json
+data/validation_tickets.json

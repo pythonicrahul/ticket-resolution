@@ -1647,3 +1647,74 @@ matters for NFR-09, it skipped every time. It reads D-68 now, which is tracked. 
 
 The general rule, which is what makes this worth a decision: **a document may only point at something a
 reader has.** Everything else has to be reproducible from a command, or stated as unavailable.
+
+## D-78 · Two concurrent tickets dropped one entirely, and the first fix had the same shape as the bug (FR-13, NFR-05, FR-14)
+
+The review that build rows 16 and 17 never got (R10) found the worst defect in this project.
+
+`api.submit` opened a `DecisionLog` of its own and then attached it to the **shared**
+`SupportPipeline`: `state.attach(log)` set `self._log`. `pipeline._record` reads that log *at write
+time* — after a provider round trip, so seconds later (D-68: 4.1 s median). `DecisionLog` also opened
+sqlite without `check_same_thread=False`, while `provider.py` passes it. FastAPI runs sync endpoints on a
+threadpool.
+
+Reproduced against a real server with two overlapping POSTs: one ticket answered, **the other 500'd with
+not one row in the database**. It had already been drafted and judged — two paid calls — and its
+`generation` row went to the JSONL fallback. `DecisionLogUnavailable` is deliberately re-raised (D-27),
+`submit` had no handler, so the terminal row was never written. No sent answer, no logged escalation, no
+audit row, no queue entry.
+
+That breaks three non-negotiables at once: *"every ticket ends as a sent answer or a logged escalation,
+nothing is silently dropped"*, FR-13's reconciliation, and NFR-05's 100%. **Two browser tabs on `/docs`
+would have done it.**
+
+**The fix, and why the first version of it was wrong.** `attach_log` now sets a `ContextVar`, so each
+request owns its log and the harness — which attaches once and processes serially — behaves exactly as
+before. The first version used a bare module-level `ContextVar`, which is visible to *every* instance: a
+log attached to one pipeline could be written to by another. **That is the same class of mistake it was
+fixing**, and the suite caught it within seconds — a later test's fresh pipeline picked up an earlier
+test's closed handle. The variable is keyed on `id(self)` now, and `T-R10-1b` pins it without needing a
+race.
+
+**And every exit from `submit` writes a row first**, which three did not: a malformed body raised a 400
+with no row (while the same ticket through the harness is escalated as `malformed_ticket` with one — FR-07
+says "logged and escalated, not crashed", and the module's own docstring claimed "no second, looser way
+in"); a pipeline that could not be built 500'd with no row; and anything raised between opening the log
+and `perform` lost the ticket. The 400 is still a 400 and the 503 is still a 503; they are just logged
+first.
+
+**`/health` is a readiness check now.** It returned `ok: true` with no classifier — exactly the state
+`docker compose up` leaves before `docker compose run --rm train`: a container Docker marks healthy,
+Prometheus showing zeroes, every ticket 500ing. It reports `pipeline: ready | not built | unavailable`,
+and no longer reads the lazy retriever property, because the Dockerfile gives the HEALTHCHECK five seconds
+and an index build does not fit in them. The two lazy builds are behind one lock, so two first requests no
+longer each build the index against the same `CHROMA_PATH`.
+
+## D-79 · The kill switch needs a bind mount, and the evaluation inputs do not belong in the image (FR-16, FR-04, NFR-09)
+
+Two ops findings from R10, both of which a passing test had been asserting the wrong way round.
+
+**`test_the_kill_switch_is_reachable_from_the_host` demanded the one arrangement that is not.** It
+required a volume starting `storage:/app/storage` — a **named** Docker volume, which lives inside
+Docker's own storage area, inside the VM on macOS, where `touch storage/KILL_SWITCH` cannot reach it. So
+the test contradicted its own docstring ("an operator cannot touch it without entering the container,
+which is not an emergency control"), and changing compose to the bind mount that makes the README true
+made the test *fail*. It is a bind mount now, and the test asserts the host side resolves to this
+repository's `storage/`. Changing it also exposed that the sqlite viewer mounted the **named** volume, so
+after the move it would have read an empty database — caught by the sibling test, which now compares the
+host path rather than a same-looking name.
+
+**`COPY data/ ./data/` shipped the agents' private answer files into the serving image.** FR-04 §3.1
+singles out `ground_truth_responses.json` as never indexed and never returned, and the Dataset Guide says
+a system that could read it would make the evaluation meaningless. Nothing in `src/` reads it, so this was
+exposure rather than a leak — the only thing keeping it out of the index was `DOCS_PATH` pointing
+elsewhere. Both evaluation files are in `.dockerignore` now, `documentation.json` still ships because it is
+what FR-04 searches, and the `gate` service mounts `./data` read-only instead. That has a second benefit:
+a file nobody has seen can be dropped in and named with `--input`, rather than editing compose.
+
+**And the ops tests could not see either.** The image test checked only what `pyproject` declares, so
+deleting `COPY prompts/` left the suite green and produced an image where every model call raises
+`PromptError`. The no-key guard read `"LLM_API_KEY" not in service["environment"]`, which is `True` for
+compose's **list** form — `["LLM_API_KEY=sk-live-…"]` sailed past the guard that exists to stop exactly
+that. Both are tested from what the code actually reads now (`T-R10-8`, `T-R10-9`), and the key guard
+handles both forms with the helper itself under test.

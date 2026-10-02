@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-008",
+  "channel": "email",
+  "subject": "Unexpected overage charges",
+  "body": "Overage charges appeared on our invoice that we were not expecting, even though we have a spend cap set. Please refund the overage charges for this month.",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Lena Fischer",
+  "customer_tier": "business",
+  "customer_region": "europe",
+  "language_fluency": "fluent"
+}

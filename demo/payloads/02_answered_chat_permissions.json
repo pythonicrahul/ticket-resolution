@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-002",
+  "channel": "chat",
+  "subject": "",
+  "body": "We are tightening permissions after a review and I want to understand how group membership interacts with directly assigned roles.",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Chen Brooks",
+  "customer_tier": "standard",
+  "customer_region": "asia_pacific",
+  "language_fluency": "fluent"
+}

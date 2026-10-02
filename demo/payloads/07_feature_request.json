@@ -1,0 +1,11 @@
+{
+  "ticket_id": "DEMO-007",
+  "channel": "email",
+  "subject": "Please add per-project spend caps",
+  "body": "It would be very useful to set spend caps per project rather than only for the whole organisation. At the moment one team's overspend affects everyone.",
+  "received_at": "2026-10-02T09:00:00Z",
+  "customer_name": "Tom Becker",
+  "customer_tier": "standard",
+  "customer_region": "europe",
+  "language_fluency": "fluent"
+}
