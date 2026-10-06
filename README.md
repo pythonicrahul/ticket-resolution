@@ -1,10 +1,96 @@
 # ticketing-agent
 
-A support system for CloudServe Solutions (Forward Deployed AI Engineering capstone). It answers tickets from CloudServe's own documentation when it can defend the answer, with citations, and escalates to a person, with a summary and the relevant articles attached, when it cannot. Every decision is logged.
+A support system for CloudServe Solutions (Forward Deployed AI Engineering capstone). It answers a
+ticket from CloudServe's own documentation when it can defend the answer — with citations — and
+escalates to a person, with a summary and the relevant articles attached, when it cannot. Every
+decision is written to a log **before** the action is taken.
 
-> Status: built through the backlog in `docs/BACKLOG.md` and the review backlog in `docs/REVIEW_BACKLOG.md`. Requirements are in `docs/PRD.md`, one spec per requirement in `docs/specs/`, and every non-obvious choice in `docs/decisions.md`.
->
-> **How it works:** [`docs/Implementation.md`](docs/Implementation.md) (rendered: [`docs/Implementation.html`](docs/Implementation.html)). **How to demo it:** [`demo/README.md`](demo/README.md).
+**It is not an agent.** It is a fixed LangGraph pipeline: classify → retrieve → route → draft →
+five guardrails → send or escalate. The model never chooses the next step, which is what makes the
+routing auditable and the same input reach the same decision.
+
+| | |
+|---|---|
+| How it works, in detail | [`docs/Implementation.md`](docs/Implementation.md) · [rendered](docs/Implementation.html) |
+| Requirements | [`docs/PRD.md`](docs/PRD.md) — FR-01…FR-16, NFR-01…NFR-09, one spec each in [`docs/specs/`](docs/specs) |
+| Why anything is the way it is | [`docs/decisions.md`](docs/decisions.md) — every non-obvious choice, numbered |
+| What was built, in order | [`docs/PROGRESS.md`](docs/PROGRESS.md), [`docs/BACKLOG.md`](docs/BACKLOG.md), [`docs/REVIEW_BACKLOG.md`](docs/REVIEW_BACKLOG.md) |
+| Demo and video | [`demo/README.md`](demo/README.md) · [`demo/VIDEO_SCRIPT.md`](demo/VIDEO_SCRIPT.md) · [slides](demo/CloudServe_Capstone_Presentation.pptx) |
+
+---
+
+## Run it
+
+Four commands from a clean clone, run from the repository root. Nothing else is needed.
+
+```bash
+# 1. install uv (skip if you have it), then open a NEW terminal so it is on your PATH
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. install Python 3.14 and every dependency into .venv
+uv sync
+
+# 3. configure: copy the example, then paste your OpenAI key after LLM_API_KEY=
+cp .env.example .env
+
+# 4. train the ticket classifier (about a minute, needed once)
+uv run python scripts/train_classifier.py
+```
+
+Check it worked. The suite needs no network and no API key, so it passes before you add one:
+
+```bash
+uv run pytest -q          # every test green
+uv run ruff check .       # "All checks passed!"
+```
+
+### Then choose one
+
+**A. Serve it, and submit a ticket.**
+
+```bash
+uv run uvicorn ticketing_agent.api:app
+```
+
+Open <http://127.0.0.1:8000/docs> to try every endpoint from the browser, or in a second terminal:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/tickets \
+  -H 'Content-Type: application/json' -d @demo/payloads/01_answered_email_deploy.json
+```
+
+You should get `"decision": "auto_respond"`, a `reply` that names the article it used, and
+`citations` holding the chunk ids it actually retrieved. **The first request is slow** — it builds
+the search index and downloads the embedding model once; after that a ticket takes about four
+seconds, nearly all of it waiting on the model.
+
+Fourteen ready-made tickets are in `demo/payloads/`, one per case — answered, escalated, blocked by
+a guardrail, prompt injection, a credential in the ticket body, malformed, and the kill switch.
+
+**B. Run the full unattended evaluation (the gate).**
+
+```bash
+uv run python -m evaluation.harness \
+  --input data/validation_tickets.json \
+  --output evaluation/results/my-run
+```
+
+About five minutes for 80 tickets. It writes `metrics.md`, `metrics.json` and `outcomes.jsonl` into
+the output directory, and the report must contain `Log reconciles with tickets processed: yes`.
+**Point `--input` at any ticket file with the documented schema** — no data file name is hardcoded
+anywhere, which is deliberate and tested.
+
+**C. Walk through every case, narrated.**
+
+```bash
+demo/demo.sh          # in a second terminal, with the API running
+```
+
+One case per Enter key. What each should produce is in [`demo/README.md`](demo/README.md).
+
+If anything does not match, go to [Troubleshooting](#troubleshooting).
+
+---
 
 ## What you need
 
@@ -12,16 +98,19 @@ A support system for CloudServe Solutions (Forward Deployed AI Engineering capst
 |---|---|
 | OS | macOS or Linux (Windows through WSL) |
 | Tools | `git`, `curl`, and [uv](https://docs.astral.sh/uv/), which installs Python 3.14 for you |
-| An API key | an OpenAI key (see step 3 for why, and for the free alternative) |
+| An API key | an OpenAI key — see step 3 below for why, and for the free alternative |
 | Network | the first run downloads Python, the packages and the ~80 MB embedding model; after that, search and classification run locally |
 | Disk | about 2 GB |
 
-## Setup (from a clean checkout)
+No uv? `python3.14 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+&& pip install -e .`, then use `python` wherever this file says `uv run python`.
 
-Run every command from the repository root.
+## Setup, explained
 
-1. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or see https://docs.astral.sh/uv/). Open a new terminal afterwards so `uv` is on your `PATH`.
-2. Install dependencies: `uv sync` (creates `.venv` and installs Python 3.14 if you don't have it).
+1. **Install uv**: `curl -LsSf https://astral.sh/uv/install.sh | sh` (or see
+   <https://docs.astral.sh/uv/>). Open a new terminal afterwards so `uv` is on your `PATH`.
+2. **Install dependencies**: `uv sync`. Creates `.venv` and installs Python 3.14 if you don't have
+   it, from `uv.lock`, so you get the versions this was built and measured against.
 3. Configure: `cp .env.example .env`, then set `LLM_API_KEY`. **The default provider is OpenAI**:
 
    ```
@@ -45,83 +134,72 @@ Run every command from the repository root.
 
    **The free route still works** if you prefer it. `.env.example` carries the values commented
    out, with the model ids for each: `api.groq.com` (per-account limits, the better of the two)
-   and `openrouter.ai` (a shared pool, which refused every request when it was measured). A throttled run **escalates rather than fails**
-   (FR-15, A11): every ticket still ends as a logged decision, with reason `provider_unavailable`
-   for the ones the provider would not take.
+   and `openrouter.ai` (a shared pool, which refused every request when it was measured). A
+   throttled run **escalates rather than fails** (FR-15, A11): every ticket still ends as a logged
+   decision, with reason `provider_unavailable` for the ones the provider would not take.
 4. **Train the classifier**: `uv run python scripts/train_classifier.py`. It fits on
-   `data/development_tickets.json` and writes `storage/classifier.joblib` (about a minute). The
-   harness never trains during a run, so without this it refuses to start — a missing model is a
-   setup error, not a silent fallback.
-5. Check: `uv run pytest -v` — the full suite runs with no network and no API key. (No count is quoted here on purpose: it goes stale the next time a test is added.)
+   `data/development_tickets.json` and writes `storage/classifier.joblib` (about a minute), plus
+   the out-of-fold report `evaluation/reports/classifier_calibration.md`. The harness never trains
+   during a run, so without this it refuses to start — a missing model is a setup error, not a
+   silent fallback.
+5. **Check**: `uv run pytest -v`. The full suite runs with no network and no API key, from recorded
+   fixtures. (No count is quoted here on purpose: it goes stale the next time a test is added.)
 
-No uv? `python3.14 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && pip install -e .`, then use `python` wherever this file says `uv run python`.
+## The API
 
-## Run it
-
-| What | Command | Result |
-|---|---|---|
-| The API | `uv run uvicorn ticketing_agent.api:app` | <http://127.0.0.1:8000/docs> |
-| Full unattended evaluation (the gate) | `uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/` | `metrics.md`, `metrics.json`, `outcomes.jsonl` in the output directory |
-| The same, with no model calls | add `--stub-pipeline` (ingest and retrieval only; for exercising the machinery) | |
-| The scripted demo | `demo/demo.sh` (with the API running) | one case per Enter key; see `demo/README.md` |
-| Tests | `uv run pytest -v` | |
-| Lint | `uv run ruff check .` | |
-
-### 1. The API
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | thresholds in force, kill-switch state, and whether anything it is configured to load is missing |
+| `GET /search?q=…&k=…` | ranked documentation passages for an agent (FR-04) |
+| `POST /tickets` | one ticket through the full pipeline: `auto_respond` with a cited reply, or `escalate` with a handover summary |
+| `GET /queue` | escalated tickets, ordered by urgency then age (FR-05) |
+| `GET /metrics`, `GET /metrics/prometheus` | operational figures, computed from the decision log |
 
 ```bash
-uv run uvicorn ticketing_agent.api:app
-```
-
-Open <http://127.0.0.1:8000/docs> for an interactive page where you can try every endpoint, or use `curl`:
-
-```bash
-# what the service is enforcing (thresholds, kill switch)
+# what the service is enforcing (thresholds, kill switch, what is missing)
 curl -s http://127.0.0.1:8000/health
 
 # search the documentation the way an agent would
 curl -s -G http://127.0.0.1:8000/search --data-urlencode "q=my deployment keeps dying" --data-urlencode "k=3"
 
-# submit a ticket (ready-made tickets for every case are in demo/payloads/)
+# submit a ticket
 curl -s -X POST http://127.0.0.1:8000/tickets \
   -H 'Content-Type: application/json' -d @demo/payloads/01_answered_email_deploy.json
 
 # what is waiting for a person, most urgent first
 curl -s http://127.0.0.1:8000/queue
 
-# counts computed from the decision log; Prometheus format at /metrics/prometheus
+# counts from the decision log; Prometheus format at /metrics/prometheus
 curl -s http://127.0.0.1:8000/metrics
 ```
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | thresholds in force, kill-switch state, whether the index and classifier are loaded |
-| `GET /search?q=…&k=…` | ranked documentation passages for an agent (FR-04) |
-| `POST /tickets` | one ticket through the full pipeline: `auto_respond` with a cited reply, or `escalate` with a handover summary |
-| `GET /queue` | escalated tickets, ordered by urgency then age (FR-05) |
-| `GET /metrics`, `GET /metrics/prometheus` | operational figures, from the decision log |
+`/health` answers immediately and deliberately builds nothing, so it reports `pipeline: not built`
+until the first ticket arrives — that is a healthy state, not a fault. To keep a separate decision
+log (for a demo, say), start the API with
+`DECISION_LOG_PATH=./storage/demo.db uv run uvicorn ticketing_agent.api:app`; a variable set on the
+command line wins over `.env`.
 
-The first request after start-up builds the search index and loads the classifier, so it is slower than the rest.
-To keep a separate decision log (for a demo, say), start the API with `DECISION_LOG_PATH=./storage/demo.db uv run uvicorn ticketing_agent.api:app`; a variable set on the command line wins over `.env`.
+**The API is unauthenticated** and `/queue` returns customer-derived text. That is recorded in
+FR-04 §7, and an agent UI and auth are out of scope in the PRD.
 
-### 2. The unattended evaluation run
+## The unattended evaluation run
 
 ```bash
-uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/
+uv run python -m evaluation.harness --input data/validation_tickets.json --output evaluation/results/my-run
 ```
 
-The harness accepts any ticket file with the documented schema: point `--input` at it. No data file
-name is hardcoded anywhere. It processes every ticket even if some fail, writes every decision to the
-log, checks that the log reconciles with the tickets processed, and writes:
+It processes every ticket even if some fail, writes every decision to the log before acting, checks
+that the log reconciles with the tickets processed, and writes:
 
 | File | What it holds |
 |---|---|
-| `metrics.md` | the human report: volume, business outcomes, technical and governance figures, segment tables, and what the run does not measure |
+| `metrics.md` | the human report: volume, business outcomes, technical and governance figures, segment tables, and an explicit list of what the run does **not** measure |
 | `metrics.json` | the same figures, machine-readable |
 | `outcomes.jsonl` | one line per ticket: the decision, the reason, the exact reply sent or the handover note |
 
-Useful options: `--limit N` (first N tickets), `--run-id NAME`, `--decision-log PATH`, and `--no-cache`
-for a timing run (see Pace).
+Useful options: `--limit N` (first N tickets), `--run-id NAME`, `--decision-log PATH`,
+`--stub-pipeline` (ingest and retrieval only, no model calls — for exercising the machinery), and
+`--no-cache` for a timing run (see Pace).
 
 **Pace.** How many model calls a ticket costs depends on how far it gets, which is NFR-07's point:
 
@@ -153,13 +231,47 @@ use `--no-cache` for timing, which neither reads nor writes the cache (D-68).
 **Stopping it.** `touch storage/KILL_SWITCH` stops every automatic reply from the next ticket
 onwards; every ticket then escalates with that reason recorded. Delete the file to resume (FR-16).
 
+## Results you can read without running anything
+
+Three gate runs are committed, so the figures below can be checked against their own artefacts:
+
+| | |
+|---|---|
+| The reference run — 80 validation tickets, every response live | [`evaluation/results/kept-gate-2026-10-02/metrics.md`](evaluation/results/kept-gate-2026-10-02/metrics.md) |
+| The same file under a path the repo had never seen, and a replay of it | `…-renamed/`, `…-replay/` |
+| What the three say when compared | [`evaluation/reports/gate-2026-10-02-checkpoint.md`](evaluation/reports/gate-2026-10-02-checkpoint.md) |
+| The two-assessor review sheet, ready to fill in | [`evaluation/reports/review_sample_2026-10-02.csv`](evaluation/reports/review_sample_2026-10-02.csv) |
+| Out-of-fold classifier measurement | [`evaluation/reports/classifier_calibration.md`](evaluation/reports/classifier_calibration.md) |
+
+From the reference run: **42 of 80 answered, 38 escalated, 3 blocked** by a guardrail; 80 decisions
+logged against 80 tickets with no row missing, extra or duplicated; 0 private-data detections and 0
+citations that do not resolve.
+
+And what it does not reach, stated plainly because a report that only carries its good numbers is
+not evidence:
+
+| | target | measured |
+|---|---|---|
+| First contact resolution (proxy) | ≥60% | **52.5%** |
+| Escalation rate | ≤30% | **47.5%** |
+| Automated-path latency, p95 | <3 s | **5.6 s** — two provider round trips per answered ticket |
+| Cross-segment variation | <5 points | **35 points** on tier, driven by a segment of 8 |
+| Hallucination rate, citation accuracy | human review of ≥50 replies | **not done** — the sheet above is ready, the run answered 42 |
+
+**One number to read carefully.** Two live runs of this same commit, hours apart, routed **7 of 80
+tickets differently** — each on a reason that reads the model's exact words. A fully replayed run
+reproduces its predecessor exactly: 0 of 80 decisions differ and all 80 replies are byte-identical.
+So the routing is reproducible from the cache and not from the provider, and any single live figure
+carries a ±3 ticket spread. That is measured, not estimated (D-81).
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
 | `uv: command not found` | Open a new terminal after installing uv, or add `~/.local/bin` to `PATH`. |
-| The harness or API refuses to start: classifier missing | Run step 4 once. |
-| It refuses to start: `LLM_API_KEY` or `MODEL_NAME` missing | Step 3: copy `.env.example` to `.env` and set the key. |
+| The harness or API refuses to start: classifier missing | Run setup step 4 once. |
+| It refuses to start: `LLM_API_KEY` or `MODEL_NAME` missing | Setup step 3: copy `.env.example` to `.env` and set the key. |
+| `/health` says `pipeline: not built` | Expected before the first ticket. It builds nothing on purpose, so the healthcheck cannot time out. |
 | Every ticket escalates with `provider_unavailable` | The key is wrong, the network is down, or the provider is throttling. The run still completes; fix the key and run again. |
 | Every ticket escalates with `kill_switch` | A switch file was left behind: `rm storage/KILL_SWITCH`. |
 | The first request is slow | It builds the documentation index and downloads the embedding model once. |
@@ -167,7 +279,11 @@ onwards; every ticket then escalates with that reason recorded. Delete the file 
 
 ## Run it with Docker
 
-> **Optional, and not yet verified end to end:** the image has not been built and the stack has not been started (review row R11). The uv path above is the supported way to run the system.
+> Optional. The uv path above is the supported one. This stack was built and run end to end on
+> 2026-10-02 (review row R11) — a ticket through the documented endpoint, the decision log read
+> back from the host, the kill switch, and the Prometheus scrape — and it is verified *as of that
+> row*, not continuously: CI has no Docker, so the tests parse the compose file rather than build
+> the image.
 
 `docker compose up --build` brings up the system and three windows into it:
 
@@ -225,14 +341,16 @@ target permanently down — so the checks are worth having.
 | Path | What is there |
 |---|---|
 | `src/ticketing_agent/` | the components: ingest, classify, retrieve, route, generate, guardrails, handover, provider, decision log, pipeline, API |
-| `evaluation/` | the unattended harness; run outputs go to `evaluation/results/` (git-ignored) |
+| `evaluation/` | the unattended harness, the committed runs under `results/kept-*`, and the reports |
 | `prompts/` | the versioned prompt library and its register |
 | `docs/` | requirements, specs, decisions, implementation notes, diagrams, backlogs and progress log |
 | `demo/` | demo payloads, the demo runner, the demo runbook and the video script |
 | `tests/` | the test suite and synthetic fixtures |
 | `data/` | the pack's datasets |
-| `scripts/` | training, sweeps, the review-sample sheet and other one-off tools |
+| `scripts/` | training, sweeps, the review-sample sheet, the gate comparison and other one-off tools |
+| `storage/` | runtime state: Chroma index, decision log, response cache, classifier (git-ignored) |
 
 ## Attribution
 
-See `ATTRIBUTION.md`.
+Written with Claude Code; see [`ATTRIBUTION.md`](ATTRIBUTION.md) for which modules, and
+`Co-Authored-By` trailers on every commit.

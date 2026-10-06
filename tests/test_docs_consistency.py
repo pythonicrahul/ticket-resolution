@@ -6,6 +6,7 @@ exists because the three had already drifted (review rows R1 and R9).
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -308,3 +309,67 @@ def test_T_R11_2_the_readme_is_honest_about_the_cold_start(readme: str):
     assert "pipeline: not built" in docker, (
         "a reader needs to know an unbuilt graph is a healthy state, not a fault")
     assert "does **not** trigger" in docker or "does not trigger" in docker
+
+
+# --- R13: the README now quotes a run that is in the repository ---------------------------
+
+KEPT_RUN = ROOT / "evaluation" / "results" / "kept-gate-2026-10-02"
+
+
+def test_T_R13_2_the_readmes_results_match_the_run_it_points_at(readme: str):
+    """Every figure in the README's results section is read back out of the committed run.
+
+    `T_R9_3` had to read `docs/decisions.md` because nothing was committed and
+    `evaluation/results/` is git-ignored — a test that reads a git-ignored path skips on a clean
+    checkout, which is the only state that matters (R12). R13 kept three runs under the
+    `kept-*` exception, so this one reads the artefact directly and **must not skip**: if the
+    directory is missing, the README is pointing at something a reader does not have (D-77).
+    """
+    assert KEPT_RUN.is_dir(), (
+        f"{KEPT_RUN} is what the README's results section links to; a document may only point "
+        "at something a reader has")
+    run = json.loads((KEPT_RUN / "metrics.json").read_text(encoding="utf-8"))
+
+    results = readme[readme.index("## Results you can read without running anything"):]
+    results = results[:results.index("## Troubleshooting")]
+
+    volume = run["volume"]
+    assert (f"**{volume['answered_automatically']} of {volume['tickets_processed']} answered, "
+            f"{volume['escalated']} escalated, {volume['blocked_by_guardrails']} blocked**"
+            ) in results, "the volume line has drifted from the run it cites"
+
+    business = run["business"]
+    for figure in (business["first_contact_resolution_proxy_pct"],
+                   business["escalation_rate_pct"]):
+        assert f"**{figure}%**" in results, f"{figure}% is not the figure the run recorded"
+
+    # The NFR-01 number is quoted in seconds to one place; derive it rather than restate it.
+    p95_s = round(run["latency"]["automated_path_p95_ms"] / 1000, 1)
+    assert f"**{p95_s} s**" in results, f"the automated-path p95 is {p95_s} s in the run"
+
+    worst_tier = max(r["answered_pct"] for r in run["segments"]["tier"]["rows"].values()) - \
+        min(r["answered_pct"] for r in run["segments"]["tier"]["rows"].values())
+    assert f"**{round(worst_tier)} points**" in results, (
+        f"the tier spread is {worst_tier} points in the run")
+
+    governance = run["governance"]
+    assert governance["decisions_logged"] == volume["tickets_processed"]
+    assert governance["reconciles"] is True
+    assert governance["private_data_detections"] == 0
+    assert run["technical"]["citations_that_do_not_resolve"] == 0
+    assert "no row missing, extra or duplicated" in results
+
+
+def test_T_R13_3_the_readme_states_the_run_to_run_spread(readme: str):
+    """A single live figure without its spread is the claim D-81 exists to stop.
+
+    Two live runs of the same commit routed 7 of 80 tickets differently; a fully replayed run
+    reproduced its predecessor exactly. A reader comparing their own run against the committed
+    one will see a different number, and has to be told that beforehand rather than discover it.
+    """
+    decisions = DECISIONS.read_text(encoding="utf-8")
+    d81 = decisions.split("## D-81")[1].split("\n## D-")[0]
+    for claim in ("**7 of 80**", "**0 of 80**"):
+        assert claim in d81, f"D-81 no longer records {claim}, which the README quotes"
+    for claim in ("7 of 80", "0 of 80", "D-81"):
+        assert claim in readme, f"the README dropped the spread it has to state: {claim}"
