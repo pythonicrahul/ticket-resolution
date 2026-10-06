@@ -21,6 +21,14 @@ routing auditable and the same input reach the same decision.
 
 ## Run it
 
+> **You need your own OpenAI API key.** None ships with this repo; `.env.example` has
+> `LLM_API_KEY=` empty. Get one at <https://platform.openai.com/api-keys> — a full 80-ticket
+> evaluation run costs about $0.03.
+>
+> Without a key the test suite, `--stub-pipeline` and `/search` all still work, and a run still
+> completes: every ticket escalates `provider_unavailable` and is logged (FR-15). That is correct
+> behaviour, not a result. A free provider is in step 3 of Setup.
+
 Four commands from a clean clone, run from the repository root. Nothing else is needed.
 
 ```bash
@@ -30,8 +38,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 2. install Python 3.14 and every dependency into .venv
 uv sync
 
-# 3. configure: copy the example, then paste your OpenAI key after LLM_API_KEY=
+# 3. configure
 cp .env.example .env
+#    now open .env and put your key on the LLM_API_KEY line, so it reads:
+#      LLM_API_KEY=<paste your OpenAI key here, no quotes>
+#    nothing else in the file needs changing
 
 # 4. train the ticket classifier (about a minute, needed once)
 uv run python scripts/train_classifier.py
@@ -98,7 +109,7 @@ If anything does not match, go to [Troubleshooting](#troubleshooting).
 |---|---|
 | OS | macOS or Linux (Windows through WSL) |
 | Tools | `git`, `curl`, and [uv](https://docs.astral.sh/uv/), which installs Python 3.14 for you |
-| An API key | an OpenAI key — see step 3 below for why, and for the free alternative |
+| An API key | **your own OpenAI key**, from <https://platform.openai.com/api-keys> — about $0.03 for a full evaluation run. See step 3 for why it is paid, and for the free alternative |
 | Network | the first run downloads Python, the packages and the ~80 MB embedding model; after that, search and classification run locally |
 | Disk | about 2 GB |
 
@@ -111,9 +122,12 @@ No uv? `python3.14 -m venv .venv && source .venv/bin/activate && pip install -r 
    <https://docs.astral.sh/uv/>). Open a new terminal afterwards so `uv` is on your `PATH`.
 2. **Install dependencies**: `uv sync`. Creates `.venv` and installs Python 3.14 if you don't have
    it, from `uv.lock`, so you get the versions this was built and measured against.
-3. Configure: `cp .env.example .env`, then set `LLM_API_KEY`. **The default provider is OpenAI**:
+3. Configure: `cp .env.example .env`, then **put your own OpenAI key on the `LLM_API_KEY` line**
+   (<https://platform.openai.com/api-keys>). It is the only value you have to supply; the file
+   ships with every other setting filled in. **The default provider is OpenAI**:
 
    ```
+   LLM_API_KEY=                    # <- your key goes here, and nowhere else
    LLM_BASE_URL=https://api.openai.com/v1
    MODEL_NAME=gpt-4o-mini          # drafting (PR-01) and the handover note (PR-02)
    JUDGE_MODEL_NAME=gpt-4.1-mini   # the grounding check (PR-03), deliberately a different model
